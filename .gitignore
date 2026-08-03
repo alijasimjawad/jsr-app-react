@@ -26,3 +26,8 @@ dist-ssr
 *.sln
 *.sw?
 .claude/
+
+# Harmless leftover from sandbox filesystem testing during setup — safe to
+# delete manually from Finder; the agent's sandbox can rename/overwrite files
+# on this mount but can't unlink them.
+_CLAUDE_SANDBOX_LEFTOVER_safe_to_delete.txt

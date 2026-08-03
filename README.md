@@ -33,4 +33,4 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 ## Deployment
 
-This app deploys to production at `tracker.al-ahmadi-group.com` via Vercel, building from this standalone repo (split out from the old `tac-tracker` monorepo on 2026-07-22). Pushing to `main` triggers a new production deployment automatically.
+This app is JSR Network Tracker, forked from the `tac-app-react` codebase on 2026-08-04 as the starting point for a rebuilt JSR React app. Production domain, Vercel project, and deployment are not configured yet — that happens in a later phase of this project.
