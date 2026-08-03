@@ -1,0 +1,848 @@
+/* ── Page-scoped variables for deep-navy gradient (no equivalent in tokens.css) ── */
+.page {
+  --navy-deep:    #04152F;
+  --navy-mid:     #072B54;
+  --navy-light:   #0B3F73;
+  --panel-text:   rgba(255, 255, 255, 0.85);
+  --panel-muted:  rgba(255, 255, 255, 0.50);
+  --panel-faint:  rgba(255, 255, 255, 0.10);
+  --glow-blue:    rgba(37, 99, 235, 0.18);
+
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   LEFT: Branding Panel
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.brandPanel {
+  position: relative;
+  flex: 0 0 44%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  background:
+    linear-gradient(90deg, rgba(3, 20, 48, 0.55) 0%, rgba(3, 26, 61, 0.38) 45%, rgba(3, 31, 72, 0.20) 100%),
+    url('/login-bg-desktop.webp');
+  background-color: #04152f;
+  background-size: cover;
+  background-position: 28% center;
+  background-repeat: no-repeat;
+  overflow: hidden;
+  padding: 0 52px;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Decorative: soft blue glow accent for extra depth over the photo */
+.bgGlow1 {
+  position: absolute;
+  width: 480px;
+  height: 480px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.30) 0%, transparent 65%);
+  bottom: -60px;
+  right: -120px;
+  pointer-events: none;
+}
+
+/* Content layer — rendered after bg elements so it paints on top */
+.brandInner {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 60%);
+  margin-left: calc(37% + 15px);
+  container-type: inline-size;
+  padding-top: clamp(28px, 5vh, 64px);
+  padding-bottom: clamp(20px, 3vh, 36px);
+  overflow: hidden;
+  animation: slideUp 0.55s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Logo + headline + paragraph + features — centered within the remaining space */
+.brandMain {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Brand lockup — real TAC logo image (light variant, sized by width) ── */
+.brand {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: clamp(34px, 4vh, 44px);
+}
+
+.brandLogoImg {
+  width: clamp(175px, 13vw, 205px);
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.45));
+}
+
+/* ── Headline ── */
+.headline {
+  font-size: clamp(22px, 6cqi, 30px);
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.2;
+  margin: 8px 0 clamp(18px, 2vh, 22px);
+  letter-spacing: -0.4px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+.headlineLine {
+  display: block;
+  white-space: nowrap;
+}
+
+.headlineAccent {
+  color: var(--accent);
+}
+
+/* ── Description ── */
+.brandDesc {
+  font-size: clamp(14px, 1.1vw, 17px);
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.92);
+  margin: 0 0 clamp(38px, calc(3.4vh + 10px), 44px);
+  max-width: 360px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Feature rows ── */
+.features {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 1.8vh, 18px);
+}
+
+.feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.featureIcon {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: rgba(4, 21, 47, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  backdrop-filter: blur(2px);
+}
+
+.featureTitle {
+  font-size: clamp(14px, 1vw, 17px);
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 3px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+}
+
+.featureDesc {
+  font-size: clamp(12px, 0.85vw, 14px);
+  color: rgba(255, 255, 255, 0.70);
+  line-height: 1.5;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Footer ── */
+.brandFooter {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.32);
+  margin: clamp(16px, 3vh, 32px) 0 0;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   RIGHT: Login Panel
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.loginPanel {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 3vh, 32px) 32px;
+  background: var(--bg);
+  overflow: hidden;
+  animation: fadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1) 0.1s both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Mobile-only brand hero — hidden on desktop */
+.mobileBrand {
+  display: none;
+}
+
+.mobileBrandLogoImg {
+  height: 40px;
+  width: auto;
+  display: block;
+}
+
+/* Mobile-only security note — hidden on desktop */
+.mobileSecurityNote { display: none; }
+
+/* ── Card ── */
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: clamp(28px, 4vh, 44px) 40px clamp(20px, 3vh, 30px);
+  width: 100%;
+  max-width: 520px;
+  margin-top: -12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08), 0 3px 8px rgba(15, 23, 42, 0.04);
+}
+
+.cardHeader {
+  margin-bottom: clamp(20px, 3vh, 32px);
+}
+
+.heading {
+  font-size: clamp(22px, 2vw, 26px);
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+  letter-spacing: -0.4px;
+}
+
+.subheading {
+  font-size: 14px;
+  color: var(--slate-700);
+  margin: 0;
+}
+
+/* ── Form ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--slate-700);
+}
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 14px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.input {
+  width: 100%;
+  height: 52px;
+  padding: 0 14px 0 44px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Extra right padding to not overlap eye toggle */
+.inputPassword {
+  padding-right: 48px;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* Eye toggle */
+.eyeBtn {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.eyeBtn:hover {
+  color: var(--text-secondary);
+  background: var(--slate-100);
+}
+
+.eyeBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Error ── */
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--red-100);
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
+}
+
+.errorIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+}
+
+/* ── Submit button ── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 52px;
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  margin-top: 4px;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.28);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
+/* ── Loading spinner ── */
+.spinner {
+  width: 17px;
+  height: 17px;
+  border: 2.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Reduced motion
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (prefers-reduced-motion: reduce) {
+  .brandInner { animation: none; }
+  .loginPanel  { animation: none; }
+  .spinner     { animation: none; border-top-color: rgba(255, 255, 255, 0.7); }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Tablet  ≤ 900px
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (max-width: 900px) {
+  .brandPanel {
+    flex: 0 0 40%;
+    padding: 0 32px;
+    background-position: 22% center;
+  }
+
+  .brandInner {
+    width: min(360px, 70%);
+    margin-left: 18%;
+    padding-top: clamp(20px, 4vh, 40px);
+    padding-bottom: clamp(16px, 2.5vh, 24px);
+  }
+
+  .brandLogoImg {
+    width: 94px;
+    height: auto;
+  }
+
+  .brand {
+    margin-bottom: 24px;
+  }
+
+  .headline {
+    font-size: clamp(18px, 8cqi, 24px);
+    margin-bottom: 14px;
+  }
+
+  /* Narrower column here — allow natural wrap instead of forcing one line */
+  .headlineLine {
+    white-space: normal;
+  }
+
+  .brandDesc {
+    font-size: 13px;
+    margin-bottom: 32px;
+    max-width: none;
+  }
+
+  .features {
+    gap: 12px;
+  }
+
+  .featureIcon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .card {
+    padding: 36px 28px;
+  }
+
+  .heading {
+    font-size: 22px;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Height-aware  — shorter laptop screens (desktop only)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (min-width: 769px) and (max-height: 850px) {
+  .brandInner {
+    padding-top: clamp(20px, 3.5vh, 40px);
+    padding-bottom: clamp(14px, 2vh, 22px);
+  }
+
+  .brandLogoImg {
+    width: clamp(94px, 12vw, 141px);
+    height: auto;
+  }
+
+  .brand {
+    margin-bottom: clamp(22px, 3vh, 32px);
+  }
+
+  .headline {
+    font-size: clamp(20px, 6cqi, 28px);
+    margin-top: 0;
+    margin-bottom: clamp(12px, 1.6vh, 18px);
+  }
+
+  .brandDesc {
+    margin-bottom: clamp(28px, calc(2.4vh + 10px), 36px);
+  }
+
+  .features {
+    gap: clamp(10px, 1.4vh, 14px);
+  }
+
+  .featureIcon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .card {
+    padding: clamp(22px, 3vh, 32px) 36px clamp(16px, 2vh, 22px);
+  }
+
+  .cardHeader {
+    margin-bottom: clamp(16px, 2vh, 22px);
+  }
+
+  .form {
+    gap: 14px;
+  }
+}
+
+@media (min-width: 769px) and (max-height: 720px) {
+  .brandInner {
+    padding-top: clamp(14px, 2.5vh, 24px);
+    padding-bottom: clamp(10px, 1.5vh, 16px);
+  }
+
+  .brandLogoImg {
+    width: clamp(79px, 9vw, 110px);
+    height: auto;
+  }
+
+  .brand {
+    margin-bottom: clamp(16px, 2.2vh, 22px);
+  }
+
+  .headline {
+    font-size: clamp(18px, 5.5cqi, 24px);
+    margin-top: 0;
+    margin-bottom: clamp(8px, 1.2vh, 12px);
+  }
+
+  .brandDesc {
+    font-size: 13px;
+    margin-bottom: clamp(24px, calc(1.8vh + 10px), 28px);
+  }
+
+  .features {
+    gap: clamp(8px, 1vh, 10px);
+  }
+
+  .featureIcon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .featureDesc {
+    font-size: 11px;
+  }
+
+  .card {
+    padding: clamp(18px, 2.4vh, 26px) 32px clamp(12px, 1.6vh, 18px);
+  }
+
+  .cardHeader {
+    margin-bottom: clamp(12px, 1.6vh, 18px);
+  }
+
+  .form {
+    gap: 12px;
+  }
+
+  .input,
+  .btn {
+    height: 46px;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Mobile  ≤ 768px — two-section layout with branded hero
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (max-width: 768px) {
+  .page {
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #F5F7FB;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .brandPanel {
+    display: none;
+  }
+
+  /* Full-height column, starts from top */
+  .loginPanel {
+    flex: none;
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0;
+    background: transparent;
+    overflow: visible;
+    animation: none;
+  }
+
+  /* ── Branded hero header ── */
+  .mobileBrand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    width: 100%;
+    min-height: clamp(168px, 30vh, 240px);
+    background:
+      linear-gradient(90deg, rgba(3, 18, 43, 0.72) 0%, rgba(4, 28, 65, 0.58) 45%, rgba(6, 52, 102, 0.48) 100%),
+      url('/login-bg-mobile.webp');
+    background-color: #04152f;
+    background-size: cover;
+    background-position: 18% center;
+    background-repeat: no-repeat;
+    border-radius: 0 0 28px 28px;
+    overflow: hidden;
+    padding: clamp(28px, 4vh, 44px) 24px clamp(40px, 6vh, 56px);
+    flex-shrink: 0;
+  }
+
+  /* Decorative signal rings */
+  .mobileRing1 {
+    position: absolute;
+    width: 260px;
+    height: 260px;
+    border-radius: 50%;
+    border: 1px solid rgba(100, 160, 255, 0.18);
+    bottom: -90px;
+    right: -50px;
+    pointer-events: none;
+  }
+
+  .mobileRing2 {
+    position: absolute;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    border: 1px solid rgba(100, 160, 255, 0.09);
+    bottom: -160px;
+    right: -110px;
+    pointer-events: none;
+  }
+
+  /* Soft radial glow */
+  .mobileGlow {
+    position: absolute;
+    width: 320px;
+    height: 320px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.26) 0%, transparent 65%);
+    bottom: -80px;
+    right: -40px;
+    pointer-events: none;
+  }
+
+  /* Logo + tagline centred over decorations */
+  .mobileLogoWrap {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .mobileBrandLogoImg {
+    width: clamp(135px, 42vw, 165px);
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 2px 14px rgba(0, 0, 0, 0.40));
+  }
+
+  .mobileTagline {
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.58);
+    letter-spacing: 0.2px;
+    text-align: center;
+  }
+
+  /* ── Card overlaps the hero by ~36px ── */
+  .card {
+    width: calc(100% - 32px);
+    max-width: 440px;
+    border-radius: 24px;
+    padding: 24px 22px 26px;
+    margin-top: -36px;
+    margin-bottom: clamp(20px, 4vh, 36px);
+    position: relative;
+    z-index: 2;
+    background: #ffffff;
+    border: 1px solid #E2E8F0;
+    box-shadow: 0 8px 32px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.05);
+  }
+
+  .cardHeader {
+    margin-bottom: 18px;
+  }
+
+  .heading {
+    font-size: clamp(28px, 7.5vw, 34px);
+    font-weight: 700;
+    line-height: 1.15;
+    color: #0F172A;
+    letter-spacing: -0.4px;
+    margin: 0 0 8px;
+  }
+
+  .subheading {
+    font-size: clamp(14px, 3.8vw, 16px);
+    color: var(--slate-500);
+    line-height: 1.45;
+    margin: 0;
+  }
+
+  .form {
+    gap: 16px;
+  }
+
+  .field {
+    gap: 8px;
+  }
+
+  .label {
+    font-size: 14px;
+  }
+
+  /* font-size ≥ 16px prevents iOS auto-zoom on focus */
+  .input {
+    height: 56px;
+    font-size: 16px;
+    border-radius: 14px;
+    border: 1.5px solid #DCE3ED;
+    background: #FAFBFC;
+  }
+
+  .input:focus {
+    background: #ffffff;
+  }
+
+  .eyeBtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .btn {
+    height: 56px;
+    border-radius: 15px;
+    font-size: 16px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #3563EB 0%, #2563EB 55%, #1D4ED8 100%);
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+    margin-top: 8px;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 55%, #1A44C4 100%);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+  }
+
+  /* Security note visible only on mobile */
+  .mobileSecurityNote {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 18px;
+    color: var(--slate-400);
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: center;
+  }
+
+  .mobileSecurityNote svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+}
+
+/* ── Short phone  ≤ 768px wide & ≤ 720px tall ── */
+@media (max-width: 768px) and (max-height: 720px) {
+  .mobileBrand {
+    min-height: clamp(136px, 24vh, 172px);
+    padding-bottom: clamp(32px, 5vh, 48px);
+  }
+
+  .mobileBrandLogoImg {
+    width: clamp(110px, 36vw, 140px);
+  }
+
+  .mobileTagline {
+    font-size: 12px;
+  }
+
+  .card {
+    margin-top: -28px;
+    padding: 20px 20px 22px;
+    margin-bottom: 16px;
+  }
+
+  .cardHeader {
+    margin-bottom: 14px;
+  }
+
+  .heading {
+    font-size: clamp(24px, 6.5vw, 28px);
+  }
+
+  .form {
+    gap: 14px;
+  }
+
+  .input {
+    height: 52px;
+  }
+
+  .btn {
+    height: 52px;
+    margin-top: 6px;
+  }
+
+  .mobileSecurityNote {
+    margin-top: 14px;
+    font-size: 11px;
+  }
+}
