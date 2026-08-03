@@ -87,7 +87,7 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Brand lockup — real TAC logo image (light variant, sized by width) ── */
+/* ── Brand lockup — logo image (light variant, sized by width) ── */
 .brand {
   display: flex;
   align-items: flex-start;

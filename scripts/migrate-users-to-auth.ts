@@ -1,23 +1,33 @@
 /**
- * One-off script: migrate TAC users table → Supabase Auth.
+ * One-off script: migrate JSR users table → Supabase Auth.
  *
  * RUN ONCE LOCALLY. Never deploy. Never commit the service role key.
  *
  * Usage:
- *   SUPABASE_SERVICE_ROLE_KEY=<key> npx tsx scripts/migrate-users-to-auth.ts
+ *   SUPABASE_URL=<url> SUPABASE_SERVICE_ROLE_KEY=<key> npx tsx scripts/migrate-users-to-auth.ts
  *
+ * SUPABASE_URL is the project's API URL (Supabase Dashboard → Settings → API → Project URL).
  * The service role key is in Supabase Dashboard → Settings → API → service_role.
- * It must NEVER be put in .env, never bundled into the frontend, and never committed.
+ * Neither must ever be hardcoded, put in .env, bundled into the frontend, or committed.
+ *
+ * NOTE: this script is not wired up for JSR yet — do not run it until Phase 4
+ * (reconnecting to JSR's existing Supabase project) is underway and approved.
  */
 
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://gauejhgitzcqjvzalshf.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL) {
+  console.error('ERROR: SUPABASE_URL env var is not set.');
+  console.error('Set it with: SUPABASE_URL=https://xxx.supabase.co SUPABASE_SERVICE_ROLE_KEY=xxx npx tsx scripts/migrate-users-to-auth.ts');
+  process.exit(1);
+}
 
 if (!SERVICE_ROLE_KEY) {
   console.error('ERROR: SUPABASE_SERVICE_ROLE_KEY env var is not set.');
-  console.error('Set it with: SUPABASE_SERVICE_ROLE_KEY=xxx npx tsx scripts/migrate-users-to-auth.ts');
+  console.error('Set it with: SUPABASE_URL=https://xxx.supabase.co SUPABASE_SERVICE_ROLE_KEY=xxx npx tsx scripts/migrate-users-to-auth.ts');
   process.exit(1);
 }
 
@@ -26,7 +36,7 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-interface TacUser {
+interface JsrUser {
   id: string;
   username: string;
   password: string;
@@ -36,7 +46,7 @@ interface TacUser {
 }
 
 async function main() {
-  console.log('Fetching users from TAC users table…');
+  console.log('Fetching users from JSR users table…');
 
   const { data: users, error } = await supabase
     .from('users')
@@ -47,7 +57,7 @@ async function main() {
     process.exit(1);
   }
 
-  const all = (users || []) as TacUser[];
+  const all = (users || []) as JsrUser[];
   console.log(`Found ${all.length} users total.`);
 
   let migrated = 0;
@@ -68,7 +78,7 @@ async function main() {
       continue;
     }
 
-    const email = `${u.username.trim().toLowerCase()}@tac.internal`;
+    const email = `${u.username.trim().toLowerCase()}@jsr.internal`;
 
     const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
       email,

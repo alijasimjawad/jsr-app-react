@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { ensureSectionsLoaded, getSections, type SectionMeta } from '../lib/sectionsCache';
 import { PROJ_NAMES, SEC_LABELS } from './NetworkScopes';
+import { storageKey } from '../config/brand';
 import styles from './SiteLookup.module.css';
 
 // ── Label / value alias maps ──────────────────────────────────────────────────
@@ -576,7 +577,7 @@ export default function SiteLookup() {
   const [preProj,         setPreProj]         = useState<string>('');
   const [preSec,          setPreSec]          = useState<string>('');
   const [recentSearches,  setRecentSearches]  = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('tac_sl_recent') ?? '[]') as string[]; }
+    try { return JSON.parse(localStorage.getItem(storageKey('sl_recent')) ?? '[]') as string[]; }
     catch { return []; }
   });
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -623,14 +624,14 @@ export default function SiteLookup() {
   function saveRecent(q: string) {
     setRecentSearches(prev => {
       const updated = [q, ...prev.filter(r => r !== q)].slice(0, 5);
-      localStorage.setItem('tac_sl_recent', JSON.stringify(updated));
+      localStorage.setItem(storageKey('sl_recent'), JSON.stringify(updated));
       return updated;
     });
   }
 
   function clearRecent() {
     setRecentSearches([]);
-    localStorage.removeItem('tac_sl_recent');
+    localStorage.removeItem(storageKey('sl_recent'));
   }
 
   async function runSearch(searchQuery?: string) {

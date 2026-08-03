@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { invalidateSections } from '../lib/sectionsCache';
 import { invalidateCache as invalidateSitesCache } from '../lib/sitesCache';
+import { BRAND } from '../config/brand';
 import styles from './AppLayout.module.css';
 
 const PAGE_TITLES: Record<string, string> = {
@@ -45,7 +46,7 @@ const RESUME_REFRESH_AFTER_MS = 20_000;
 
 export default function AppLayout() {
   const { pathname } = useLocation();
-  const title = PAGE_TITLES[pathname] ?? 'TAC Network';
+  const title = PAGE_TITLES[pathname] ?? BRAND.appName;
   const subtitle = PAGE_SUBTITLES[pathname];
   const [mobileOpen, setMobileOpen] = useState(false);
 

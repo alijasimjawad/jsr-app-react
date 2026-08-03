@@ -4,8 +4,9 @@ import './styles/tokens.css'
 import './index.css'
 import './lib/i18n'
 import App from './App.tsx'
+import { storageKey } from './config/brand'
 
-// One-time cleanup: this domain previously served the old single-HTML TAC app,
+// One-time cleanup: this domain previously served the old single-HTML JSR app,
 // which registered a service worker with an offline/cache-first strategy. Some
 // visitors' browsers may still have that stale service worker active, which can
 // briefly serve an outdated cached page before the real network version loads
@@ -15,7 +16,7 @@ import App from './App.tsx'
 // This must only run ONCE per browser — this app now registers its own
 // intentional service worker (/sw.js, for push notifications + PWA installability)
 // and re-running this cleanup on every load would keep unregistering that too.
-const LEGACY_SW_CLEANUP_KEY = 'tac_legacy_sw_cleaned';
+const LEGACY_SW_CLEANUP_KEY = storageKey('legacy_sw_cleaned');
 if (!localStorage.getItem(LEGACY_SW_CLEANUP_KEY)) {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then(regs => {

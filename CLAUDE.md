@@ -26,6 +26,8 @@ or silently retry with destructive flags.
 ## Notes
 
 - Vercel auto-deploys on every push to `main`, so a successful push means the
-  change goes live shortly after (usually 1-2 minutes).
-- This app is a React 19 + Vite + TypeScript + Supabase project deployed to
-  tracker.al-ahmadi-group.com.
+  change goes live shortly after (usually 1-2 minutes) — once a Vercel project
+  is actually configured for this repo (not yet done as of Phase 1).
+- This app is JSR Network Tracker: a React 19 + Vite + TypeScript + Supabase
+  project forked from `tac-app-react`. Production domain and Vercel project
+  are not configured yet — TBD in a later phase.

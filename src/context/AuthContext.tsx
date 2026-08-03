@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { ensureFullLoad as ensureSitesPreload } from '../lib/sitesCache';
 import { FIELD_ROLE_DEFAULT_KEYS, LEGACY_ACTION_KEY, LEGACY_OPEN_ACTIONS } from '../lib/permissionsCatalog';
+import { buildAuthEmail } from '../config/brand';
 
 export interface UserProfile {
   id: string;
@@ -83,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function login(username: string, password: string): Promise<string | null> {
-    const email = `${username.trim().toLowerCase()}@tac.internal`;
+    const email = buildAuthEmail(username);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return error.message;
     if (!data.session) return 'Login failed — no session returned';

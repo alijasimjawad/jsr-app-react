@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
+import { storageKey } from '../config/brand';
 import styles from './MyAttendance.module.css';
 
 const LATE_CUTOFF_HOUR = 9;
@@ -75,7 +76,7 @@ function gpsErrorMessage(err: unknown): string {
 // marker is still there next time attendance data loads, we know that attempt
 // never completed and can tell the user to retry instead of leaving them
 // guessing.
-const PENDING_CLOCK_KEY = 'tac_pending_clock';
+const PENDING_CLOCK_KEY = storageKey('pending_clock');
 
 interface PendingClock {
   action: 'in' | 'out';

@@ -165,7 +165,7 @@ export default function FinClients() {
             <div className={css.formGrid}>
               <div className={`${css.formField} ${css.span2}`}>
                 <label>Company Name *</label>
-                <input className={css.formInput} placeholder="e.g. TAC, Nokia Iraq…" maxLength={100}
+                <input className={css.formInput} placeholder="e.g. JSR, Nokia Iraq…" maxLength={100}
                   value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} />
               </div>
               <div className={css.formField}>

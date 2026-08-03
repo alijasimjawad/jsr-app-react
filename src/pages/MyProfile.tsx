@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { logActivity } from '../lib/activityLog';
+import { buildAuthEmail } from '../config/brand';
 import styles from './MyProfile.module.css';
 
 // Photo crop/zoom modal — viewport size (px) and output image size (px)
@@ -326,7 +327,7 @@ export default function MyProfile() {
     if (pwNew !== pwConfirm) { setPwErr('New password and confirmation do not match'); return; }
 
     setPwSaving(true);
-    const email = `${currentUser.username.trim().toLowerCase()}@tac.internal`;
+    const email = buildAuthEmail(currentUser.username);
     const { error: authErr } = await supabase.auth.signInWithPassword({ email, password: pwCurrent });
     if (authErr) {
       setPwSaving(false);

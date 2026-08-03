@@ -8,6 +8,7 @@ import { ensureSectionsLoaded, getSections, invalidateSections } from '../lib/se
 import { ensureProjectsLoaded, getProjectKeyToNameMap } from '../lib/projectsCache';
 import { logActivity } from '../lib/activityLog';
 import { sendPushToRoles } from '../lib/pushNotify';
+import { BRAND } from '../config/brand';
 import styles from './NetworkScopes.module.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -493,8 +494,8 @@ export default function NetworkScopes() {
     const sanitize = (s: string) =>
       s.replace(/[^a-zA-Z0-9\-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
     const dateStr  = new Date().toISOString().slice(0, 10);
-    const fname    = `${sanitize(PROJ_NAMES[proj!] || proj!)}_${sanitize(secLabel)}_${dateStr}_TAC.xlsx`;
-    const titleText = `TAC Network Tracker  ·  ${PROJ_NAMES[proj!] || proj!}  ·  ${secLabel}     (Export: ${dateStr})`;
+    const fname    = `${sanitize(PROJ_NAMES[proj!] || proj!)}_${sanitize(secLabel)}_${dateStr}_${BRAND.shortName}.xlsx`;
+    const titleText = `${BRAND.appName}  ·  ${PROJ_NAMES[proj!] || proj!}  ·  ${secLabel}     (Export: ${dateStr})`;
 
     const colTypes = columns.map((h, i) => {
       const hdr = h.toLowerCase();
@@ -506,7 +507,7 @@ export default function NetworkScopes() {
 
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'TAC Network Tracker';
+    wb.creator = BRAND.appName;
     wb.created = new Date();
 
     const sheetName = secLabel.replace(/[^a-zA-Z0-9 _\-]/g, '').slice(0, 31) || 'Data';

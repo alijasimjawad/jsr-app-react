@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { BRAND, storageKey as brandStorageKey } from '../config/brand';
 import styles from './NotificationBell.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -108,7 +109,7 @@ export default function NotificationBell() {
   const readIdsRef   = useRef(readIds);
   readIdsRef.current = readIds;
 
-  const storageKey = currentUser ? `tac_notif_read_${currentUser.id}` : null;
+  const storageKey = currentUser ? brandStorageKey(`notif_read_${currentUser.id}`) : null;
 
   // ── Load read IDs from localStorage on mount ─────────────────────────────────
   useEffect(() => {
@@ -304,7 +305,7 @@ export default function NotificationBell() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subscription: sub.toJSON(),
-          title: 'TAC — test push',
+          title: `${BRAND.shortName} — test push`,
           body: `Push working for ${currentUser.full_name || currentUser.username}`,
           url: '/',
         }),

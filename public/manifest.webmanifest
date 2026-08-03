@@ -1,7 +1,7 @@
 {
-  "name": "TAC Network Tracker",
-  "short_name": "TAC Tracker",
-  "description": "TAC Network telecom project tracker — Sites DB, Network Scopes, Attendance, Field Trips, and Finance.",
+  "name": "JSR Network Tracker",
+  "short_name": "JSR",
+  "description": "JSR Network telecom project tracker — Sites DB, Network Scopes, Attendance, Field Trips, and Finance.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

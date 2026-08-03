@@ -12,6 +12,7 @@ import { ensureSavedPointsLoaded, getSavedPoints, type SavedPointMeta } from '..
 import { ensureCarKmRateLoaded, getCarKmRate } from '../lib/carSettingsCache';
 import { getRoadRoute } from '../lib/roadRouting';
 import { haversineKm } from '../lib/sitesNearest';
+import { BRAND } from '../config/brand';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { addBaseLayer } from '../lib/mapboxTiles';
@@ -221,7 +222,7 @@ function buildWaMsg(
       })()
     : '';
 
-  return `◆ *TAC Network Tracker*\n━━━━━━━━━━━━\n◆ *DAILY ACTIVITY REPORT*\n━━━━━━━━━━━━\n\n◆ *Date:* ${d}\n◆ *Project:* ${projLine}\n◆ *Site ID:* ${site_id || '—'}  |  ◆ *Gov:* ${governate || '—'}\n\n━━━━━━━━━━━━\n◆ *Team*\n${teamLines}\n\n◆ *Activity:* ${activityType || '—'}\n◆ *Status:* ${status || '—'}\n\n◆ *Notes*\n${notes || '—'}${tripBlock}\n━━━━━━━━━━━━\n_◆ TAC Network Operations Center_`;
+  return `◆ *${BRAND.appName}*\n━━━━━━━━━━━━\n◆ *DAILY ACTIVITY REPORT*\n━━━━━━━━━━━━\n\n◆ *Date:* ${d}\n◆ *Project:* ${projLine}\n◆ *Site ID:* ${site_id || '—'}  |  ◆ *Gov:* ${governate || '—'}\n\n━━━━━━━━━━━━\n◆ *Team*\n${teamLines}\n\n◆ *Activity:* ${activityType || '—'}\n◆ *Status:* ${status || '—'}\n\n◆ *Notes*\n${notes || '—'}${tripBlock}\n━━━━━━━━━━━━\n_◆ ${BRAND.shortName} Network Operations Center_`;
 }
 
 // Car/driver info now lives only in the dedicated Car Trip fields and the

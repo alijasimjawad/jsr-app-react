@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import tacLogoLight from '../assets/tac-logo-light.png';
+import { BRAND } from '../config/brand';
 import styles from './Login.module.css';
 
 function mapError(raw: string): string {
@@ -114,9 +114,9 @@ export default function Login() {
 
         <div className={styles.brandInner}>
           <div className={styles.brandMain}>
-            {/* Brand lockup — real TAC logo (light variant for legibility on navy backdrop) */}
+            {/* Brand lockup — logo (light variant for legibility on navy backdrop) */}
             <div className={styles.brand}>
-              <img src={tacLogoLight} alt="TAC Network" className={styles.brandLogoImg} />
+              <img src={BRAND.logoLight} alt={BRAND.appName} className={styles.brandLogoImg} />
             </div>
 
             <h1 className={styles.headline}>
@@ -125,7 +125,7 @@ export default function Login() {
             </h1>
 
             <p className={styles.brandDesc}>
-              TAC Network delivers reliable telecom infrastructure solutions that connect people and power progress.
+              {BRAND.tagline}
             </p>
 
             <div className={styles.features}>
@@ -153,7 +153,7 @@ export default function Login() {
             </div>
           </div>
 
-          <p className={styles.brandFooter}>© 2026 TAC Network. All rights reserved.</p>
+          <p className={styles.brandFooter}>{BRAND.copyrightLine}</p>
         </div>
       </div>
 
@@ -165,7 +165,7 @@ export default function Login() {
           <div className={styles.mobileRing2} aria-hidden="true"/>
           <div className={styles.mobileGlow}  aria-hidden="true"/>
           <div className={styles.mobileLogoWrap}>
-            <img src={tacLogoLight} alt="TAC Network" className={styles.mobileBrandLogoImg}/>
+            <img src={BRAND.logoLight} alt={BRAND.appName} className={styles.mobileBrandLogoImg}/>
             <span className={styles.mobileTagline}>Secure employee access</span>
           </div>
         </div>
@@ -173,7 +173,7 @@ export default function Login() {
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <h2 className={styles.heading}>Welcome back</h2>
-            <p className={styles.subheading}>Sign in to your TAC Network account</p>
+            <p className={styles.subheading}>Sign in to your {BRAND.appName} account</p>
           </div>
 
           <form onSubmit={handleSubmit} className={styles.form}>

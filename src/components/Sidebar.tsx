@@ -8,7 +8,7 @@ import { logActivity } from '../lib/activityLog';
 import { sendPushToRoles } from '../lib/pushNotify';
 import i18n from '../lib/i18n';
 import styles from './Sidebar.module.css';
-import tacLogoLight from '../assets/tac-logo-light.png';
+import { BRAND, storageKey } from '../config/brand';
 import { SiteLookupIcon } from '../pages/SiteLookup';
 import { ProfileIcon } from '../pages/MyProfile';
 import { MySitesIcon } from '../pages/MySites';
@@ -751,7 +751,7 @@ function LangToggle({ roleLower }: { roleLower: string | undefined }) {
     const next = lang === 'en' ? 'ar' : 'en';
     setLang(next);
     i18n.changeLanguage(next);
-    localStorage.setItem('tac_lang', next);
+    localStorage.setItem(storageKey('lang'), next);
   }
 
   return (
@@ -936,7 +936,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   useEffect(() => {
     if (roleLower && roleLower !== 'technician' && i18n.language !== 'en') {
       i18n.changeLanguage('en');
-      localStorage.removeItem('tac_lang');
+      localStorage.removeItem(storageKey('lang'));
     }
   }, [roleLower]);
 
@@ -1006,10 +1006,10 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         aria-label="Main navigation"
       >
         <div className={styles.brand}>
-          <div className={styles.brandIcon}>T</div>
-          <img src={tacLogoLight} alt="TAC Network" className={styles.brandLogoImg} />
+          <div className={styles.brandIcon}>{BRAND.shortName.charAt(0)}</div>
+          <img src={BRAND.logoLight} alt={BRAND.appName} className={styles.brandLogoImg} />
           <div className={styles.brandText}>
-            <div className={styles.brandName}>TAC Network</div>
+            <div className={styles.brandName}>{BRAND.appName}</div>
             <div className={styles.brandSub}>Telecom Mgmt</div>
           </div>
           <button

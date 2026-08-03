@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { BRAND, storageKey } from '../config/brand';
 import css from './BackupRestore.module.css';
 
 const BACKUP_TABLES = [
@@ -95,7 +96,7 @@ export default function BackupRestore() {
 
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    const fname = `tac_backup_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}.json`;
+    const fname = `${storageKey('backup')}_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}.json`;
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -130,7 +131,7 @@ export default function BackupRestore() {
 
     if (!backup.tables) {
       setRestoreOk(false);
-      setRestoreStatus('File does not appear to be a TAC backup.');
+      setRestoreStatus(`File does not appear to be a ${BRAND.shortName} backup.`);
       return;
     }
 
@@ -194,7 +195,7 @@ export default function BackupRestore() {
         <div className={css.autoBody}>
           <div className={css.autoTitle}>Automatic Backup — Active ✅</div>
           <div className={css.autoDesc}>
-            Your data is automatically backed up every hour to Google Drive (<strong>TAC_Backups</strong> folder).
+            Your data is automatically backed up every hour to Google Drive (<strong>{BRAND.shortName}_Backups</strong> folder).
             The last 48 backups are kept (2 days of history). Backups run 24/7 on Google's servers
             regardless of whether your device is on or off.
           </div>

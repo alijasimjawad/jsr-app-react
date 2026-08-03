@@ -7,6 +7,7 @@ import { haversineKm } from '../lib/sitesNearest';
 import { cacheOk, getAllSites, ensureFullLoad } from '../lib/sitesCache';
 import { getRoadRoute, hasRoadRoutingToken } from '../lib/roadRouting';
 import { addBaseLayer, createStyleToggleControl } from '../lib/mapboxTiles';
+import { storageKey } from '../config/brand';
 import styles from './RoutePlanner.module.css';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ interface SavedRoutePlan {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SAVED_PLANS_KEY = 'tac_route_planner_saved_plans';
+const SAVED_PLANS_KEY = storageKey('route_planner_saved_plans');
 
 const TEAM_COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
 // Line style per day (cycles if a team's plan runs past 4 days) — paired

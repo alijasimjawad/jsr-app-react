@@ -31,3 +31,22 @@ dist-ssr
 # delete manually from Finder; the agent's sandbox can rename/overwrite files
 # on this mount but can't unlink them.
 _CLAUDE_SANDBOX_LEFTOVER_safe_to_delete.txt
+
+# TAC-specific design scratch notes and reference screenshots, carried over
+# by the initial copy but not part of the JSR app. Per the Phase 1 audit,
+# recommended to exclude from the JSR repo entirely — kept out of git here.
+# Safe to delete these manually from Finder; they aren't imported by any
+# source file and don't affect the build.
+login_redesign_prompt.md
+/My work.png
+/TAC logo.png
+/attendance .png
+/my expenses.png
+/route planner.png
+/refrences/
+
+# Leftover partial node_modules directories from npm-install troubleshooting
+# in the sandbox (renamed out of the way rather than deleted, due to a
+# sandbox filesystem limitation). Not real dependencies — safe to delete
+# manually from Finder.
+_stale_node_modules_*
