@@ -293,8 +293,10 @@ Nothing gets built out of this order:
    type-checked, not yet executed. Handed to you for review; see
    `scripts/README.md` for run instructions. Nothing was written to either
    database.
-4. `scripts/phase4-01-migrate-auth-users.ts` (sections 2-4) — built after
-   preflight is approved and you confirm a passing run.
+4. ~~`scripts/phase4-01-migrate-auth-users.ts` (sections 2-4)~~ — built,
+   statically type-checked, not yet executed. Dry-run by default; requires
+   `--execute` to write anything. See `scripts/README.md` for usage and
+   rollback guidance. Nothing was written to either database.
 5. `scripts/phase4-02-migrate-tables.ts` (section 3).
 6. `scripts/phase4-03-verify-migration.ts` (sections 7-8).
 

@@ -106,3 +106,105 @@ ALLOW_RESUME=true npx tsx scripts/phase4-00-preflight.ts
   message — this script never logs key values, only PASS/WARN/FAIL results.
 - This script performs no writes and creates no Auth users; if a future
   Phase 4 script needs to do either, that is out of scope for this file.
+
+## phase4-01-migrate-auth-users.ts
+
+Migrates old JSR's `public.users` rows into the destination staging
+project: creates one Supabase Auth user per source user (email
+`username@jsr.internal`), and inserts/updates the matching destination
+`public.users` row with `password = null` and `auth_user_id` populated.
+
+**Run `phase4-00-preflight.ts` first and confirm `PREFLIGHT: PASS`** before
+running this script at all.
+
+This script touches only the destination `public.users` table and the
+destination's Auth users. It never touches any other table and never
+enables or modifies Row-Level Security. The source project is read-only —
+only `id, username, password, full_name, role, permissions, created_at` are
+read from it, nothing is ever written back.
+
+### Dry run vs execute
+
+The script defaults to a **dry run**: it reads both projects (including the
+destination's existing Auth users) and prints exactly what it would do for
+every source user, but makes zero writes. Nothing is created, inserted, or
+updated unless you pass `--execute`.
+
+```bash
+# Dry run — prints the full plan, writes nothing
+npx tsx scripts/phase4-01-migrate-auth-users.ts
+
+# Execute — performs the writes described in the dry-run output
+npx tsx scripts/phase4-01-migrate-auth-users.ts --execute
+```
+
+### Expected output
+
+Dry run prints one line per source user tagged with the action it would
+take — `SKIP` (already fully migrated), `LINK` / `LINK+CREATE` (destination
+row exists but is missing `auth_user_id`), `INSERT` / `INSERT+CREATE`
+(destination row doesn't exist yet) — followed by a plan summary with
+counts for each category, and a reminder of scope (only `public.users` +
+Auth on the destination). It ends with:
+
+```
+DRY RUN complete — no writes were made. Re-run with --execute to apply.
+```
+
+Execute mode prints the same per-user lines with real outcomes (`OK`,
+`LINK`, or `FAIL`), followed by an execute summary (created / reused /
+inserted / linked / skipped / failed counts) and exits non-zero if any user
+failed.
+
+### Idempotency / resuming
+
+Safe to run any number of times, including after a partial failure or
+`Ctrl-C` mid-run. Every source user is independently classified before any
+write happens, based on what already exists in the destination:
+
+- a destination `users` row for that id already has `auth_user_id` set →
+  skipped entirely;
+- a destination `users` row exists but `auth_user_id` is null → the
+  existing (or newly created) Auth user is linked to that row, no duplicate
+  row is inserted;
+- no destination row exists yet, but an Auth user for that email already
+  exists → that Auth user is reused, no duplicate Auth account is created;
+- neither exists → both are created fresh.
+
+Never more than one Auth account per `username@jsr.internal`, and a
+`users` row is inserted at most once per preserved source `id`, regardless
+of how many times you run this script.
+
+### Rollback guidance
+
+Staging is disposable. To undo a run against the destination staging
+project only (never against old JSR):
+
+1. In the Supabase Dashboard for the **staging** project (double-check the
+   project ref before doing anything) → Authentication → Users, delete the
+   Auth users this script created. Cross-reference against the
+   `auth_user_id` values printed in this script's own output, or re-run in
+   dry-run mode afterward to see which `username@jsr.internal` accounts
+   still resolve.
+2. Run `docs/phase3-staging-schema/staging_rollback_reset.sql` to reset the
+   schema (including `public.users`) to empty, or manually
+   `delete from public.users where auth_user_id is not null` if you want to
+   keep other staging data.
+3. Re-run 01-07 (or just confirm the schema is already correct) and re-run
+   this script from a clean state.
+
+This script never touches old JSR (source) in any way, so there is nothing
+to roll back there.
+
+### Security rules — do not break these
+
+- **Never** commit `.env.phase4.local` or print a service role key.
+- **Never** log, write to a file, or store in any destination column the
+  plaintext password read from source — it is used exactly once, in memory,
+  as the `password` argument to `supabase.auth.admin.createUser()`.
+- **Never** run this against any destination other than the intended
+  staging project — the script's own identity guard refuses to proceed if
+  `EXPECTED_SOURCE_PROJECT_REF`/`EXPECTED_DEST_PROJECT_REF` don't match, or
+  if the destination resolves to old JSR or TAC's project, but this is a
+  second line of defense, not a substitute for running preflight first and
+  double-checking `.env.phase4.local` yourself.
