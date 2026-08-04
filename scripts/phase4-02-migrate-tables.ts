@@ -119,11 +119,14 @@ const TIERS: readonly TableDef[][] = [
   [
     {
       name: 'team_members',
+      // `username` exists in the destination staging schema but not in the
+      // source old-JSR table — omit it here so the SELECT from source succeeds.
+      // The destination column will be NULL for migrated rows (nullable by design).
       columns: [
         'id', 'full_name', 'monthly_salary', 'role', 'is_active', 'created_at',
         'phone', 'notes', 'national_id', 'date_of_birth', 'address',
         'emergency_contact_name', 'emergency_contact_phone', 'start_date',
-        'profile_photo_url', 'activated_at', 'deactivated_at', 'username',
+        'profile_photo_url', 'activated_at', 'deactivated_at',
       ],
       fks: [],
     },
@@ -157,6 +160,9 @@ const TIERS: readonly TableDef[][] = [
     },
     {
       name: 'revenue',
+      // Source has 12 columns (invoice_date, notes, added_by, status, section_name
+      // plus the 7 below). Destination staging schema only has these 7 — copy
+      // the intersection; the extra source columns are intentionally not migrated.
       columns: ['id', 'project_name', 'site_id', 'amount', 'month', 'year', 'created_at'],
       fks: [],
     },
