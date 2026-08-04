@@ -23,6 +23,14 @@
 
 create extension if not exists pgcrypto;
 
+-- uuid-ossp must be created BEFORE public.users below, since that table's
+-- `id` column default calls uuid_generate_v4() — Postgres resolves a column
+-- default's function reference at CREATE TABLE time, so the extension has
+-- to exist first. (Corrected: this statement previously sat after the
+-- `users` table, which would fail with "function uuid_generate_v4() does
+-- not exist" on a brand-new project — caught in the pre-execution review.)
+create extension if not exists "uuid-ossp";
+
 -- ── users (base columns only — auth_user_id + profile columns added in 04) ─
 -- Live-confirmed via docs/schema-audit-results/12_missing_core_tables_schema.csv
 create table if not exists public.users (
@@ -36,8 +44,7 @@ create table if not exists public.users (
 );
 -- Note: live JSR uses uuid_generate_v4() as this column's default, not
 -- gen_random_uuid() (unlike every other table's `id`). Preserved as-is for
--- parity. Requires the uuid-ossp extension:
-create extension if not exists "uuid-ossp";
+-- parity.
 
 -- ── team_members (base columns only — username added in 04) ────────────────
 -- Live-confirmed via docs/schema-audit-results/12_missing_core_tables_schema.csv
@@ -203,6 +210,10 @@ create table if not exists public.app_settings (
   updated_at timestamptz not null default now()
 );
 
+-- STAGING CONFIGURATION SEED DATA — not a production data migration. This is
+-- the one app-config row the app needs to function at all (approved, item 5
+-- of the corrections list), distinct from any live/business data, none of
+-- which is inserted anywhere in this package.
 insert into public.app_settings (key, value) values
   ('car_km_rate_iqd', '275')
 on conflict (key) do nothing;
@@ -224,6 +235,9 @@ create table if not exists public.projects (
   created_at   timestamptz not null default now()
 );
 
+-- STAGING CONFIGURATION SEED DATA — not a production data migration. This is
+-- the fixed list of projects the app's UI is built around (approved, item 5
+-- of the corrections list), not live/business records.
 insert into public.projects (key, display_name, has_sections, sort_order) values
   ('zain',   'Zain Project',   true,  1),
   ('nokia',  'Nokia Project',  true,  2),

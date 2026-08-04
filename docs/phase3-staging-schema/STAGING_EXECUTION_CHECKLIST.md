@@ -14,11 +14,13 @@ approve, then run each file yourself in the Supabase SQL Editor, in order.
 
 ## 1. Data confidence — not every table below is equally certain
 
-14 tables are built from a **live column export** (Phase 2C/2D audit CSVs) —
+13 tables are built from a **live column export** (Phase 2C/2D audit CSVs) —
 high confidence: `users`, `team_members`, `clients`, `activity_log`,
 `general_expenses`, `daily_activities`, `employee_documents`,
 `expense_claims`, `salary_adjustments`, `push_subscriptions`, `invoices`,
 `invoice_items`, `invoice_payments`.
+(Corrected count — an earlier draft of this checklist said 14, which didn't
+match the 13 tables actually listed; caught during pre-execution review.)
 
 **3 tables were never fully live-column-confirmed**, despite being labeled
 "confirmed compatible" in the Phase 2D closure report — that labeling was a
@@ -59,13 +61,15 @@ don't exist in old JSR. See the comments in
   they're not included. If the car-trip or section-linkage features need to
   work against JSR, that needs its own explicit follow-up phase, layered on
   top of this baseline the same way phases 15/17-21 were layered onto TAC.
-- Final RLS hardening — per your item 8. **This baseline also does not
-  enable RLS at all** (Postgres's default is RLS off = unrestricted, which
-  is the simplest "not hardened yet" state for testing). If you'd rather I
-  add an interim file that enables RLS with permissive policies mirroring
-  old JSR's current production openness (so the eventual hardening step has
-  something concrete to replace, table by table), say so and I'll add it as
-  its own numbered file — didn't want to invent that decision unasked.
+- Final RLS hardening, and permissive RLS policies — per your item 8 and
+  your explicit correction not to add permissive policies. **This baseline
+  (files 01-05) does not enable RLS at all** (Postgres's default is RLS off
+  = unrestricted, the simplest "not hardened yet" state for testing). A
+  separate `06_enable_rls_no_policies.sql` is included that flips RLS on for
+  all 24 tables with zero policies — that file is NOT part of this
+  baseline's run order and must not be run until Auth policies exist (see
+  its header). No permissive/mirroring policies have been written anywhere
+  in this package.
 - Production data — per your item 9. The only rows in this baseline are
   `app_settings`'s 1 seed row and `projects`'s 6 seed rows (app
   configuration required for the app to function at all, not
@@ -92,18 +96,24 @@ errors, then move to the next:
    `team_members`, `auth_user_id` + 9 profile columns on `users`.
 5. `05_additional_indexes.sql` — the 3 confirmed-live extra indexes plus 5
    new ones for the React-only tables' FK columns.
+6. `06_enable_rls_no_policies.sql` — **do not run yet.** Enables RLS on all
+   24 tables with zero policies attached. See the file's own header for why
+   this must not run before Auth policies exist (it would block all API
+   access). Provided now so it's ready for whenever Auth migration/policy
+   work is approved — not part of this baseline's execution.
 
-That's 25 tables total: 17 old-JSR tables minus the 3 confirmed-dead ones
-(14), plus `users`/`team_members` (already counted in the 14 — so really
-15 old-JSR-derived tables after excluding the dead ones) plus 8 new
-React-only tables (`field_trips`, `trip_participants`, `sites`,
-`attendance`, `saved_points`, `cars`, `app_settings`, `projects`) — matching
-your item 2/3/6 counts.
+That's **24 tables total** (corrected — an earlier draft of this section
+said 25, which didn't match the actual table count; caught during
+pre-execution review): 13 live-column-confirmed old-JSR tables + 3
+old-JSR-derived tables with inferred columns (`sections`, `revenue`, `rows`)
+= 16 old-JSR-derived tables, plus 8 new React-only tables (`sites`,
+`app_settings`, `projects`, `saved_points`, `cars`, `field_trips`,
+`trip_participants`, `attendance`) = 24.
 
 ## 4. After running 01-05
 
 6. Run `verify_staging_schema.sql`, section by section, and confirm:
-   - Section 1 lists all 25 tables.
+   - Section 1 lists all 24 tables.
    - Section 2 shows 0 rows everywhere except `app_settings` (1) and
      `projects` (6).
    - Section 3 returns 11 rows (confirms file 04 applied fully).
@@ -123,7 +133,9 @@ the same way.
 
 ## 6. What this does NOT do (per your items 8-10)
 
-- Does not enable/harden RLS.
+- Does not enable/harden RLS as part of the 01-05 baseline. `06_enable_rls_
+  no_policies.sql` exists on disk but is explicitly excluded from the run
+  order above and must not be run until Auth policies are ready.
 - Does not insert or migrate any production data (only the two small app-
   config seed lists noted in section 2 above).
 - Does not run anything automatically — every file above is provided for

@@ -36,6 +36,15 @@ alter table public.team_members
 -- quick check of TAC's real `auth_user_id` column (type/nullable/FK/unique)
 -- before this file is run, in case the live definition differs in some
 -- small way (e.g. no FK, or ON DELETE CASCADE instead of SET NULL).
+--
+-- PROVISIONAL — approved to keep as nullable/unique/FK-to-auth.users/ON
+-- DELETE SET NULL for now, but this definition is not final. It has not
+-- been exercised against a real Auth migration yet (that's Phase 3 Step 3,
+-- still ahead). Treat it as subject to change once Auth migration testing
+-- against this staging project confirms the actual linkage behavior needed
+-- (e.g. whether SET NULL vs. CASCADE is right, whether it should stay
+-- nullable once every user has a linked auth.users row, etc.) — do not
+-- treat this column definition as locked in until that testing is done.
 alter table public.users
   add column if not exists auth_user_id             uuid unique references auth.users(id) on delete set null,
   add column if not exists phone                     text,

@@ -7,9 +7,13 @@
 -- 2C audit file.
 -- ============================================================================
 
--- 1. All 25 expected tables exist (17 old-JSR-derived minus 3 dead ones,
---    plus 8 React-only tables = 25) — this returns 25 rows if everything in
---    01-03 ran cleanly. Anything missing shows up as absent from the list.
+-- 1. All 24 expected tables exist (13 live-column-confirmed old-JSR tables
+--    + 3 old-JSR-derived tables with inferred columns [sections, revenue,
+--    rows] = 16 old-JSR-derived tables, plus 8 React-only tables = 24) —
+--    this returns 24 rows if everything in 01-03 ran cleanly. Anything
+--    missing shows up as absent from the list. (Corrected — an earlier
+--    draft of this comment said 25, which didn't match the actual table
+--    count; caught during pre-execution review.)
 select table_name
 from information_schema.tables
 where table_schema = 'public'
