@@ -299,3 +299,64 @@ aborts immediately on any failure:
   refs at startup.
 - This script never modifies source data, never creates Auth users, and never
   enables or modifies Row-Level Security on any table.
+
+## phase4-03-verify-migration.ts
+
+Read-only post-migration verification. Run after `phase4-02` completes
+successfully to confirm the destination holds exactly what the migration
+was supposed to write. Makes zero writes — all checks are count queries,
+single-row lookups, or exhaustive FK scans against the destination.
+
+**Checks performed:**
+
+1. **Row-count parity** — queries `count(*)` on both source and destination
+   for all 17 migrated tables and compares them. For `sections`, the expected
+   destination count is `source − 10` (the 10 rows excluded via `skipIds`
+   in phase4-02 due to the `UNIQUE(project_name, section_name)` constraint).
+   Any mismatch is a `FAIL`.
+
+2. **users integrity** — every `public.users` row in the destination has
+   `auth_user_id IS NOT NULL` and `password IS NULL`. Any row that fails
+   either condition is a `FAIL`.
+
+3. **auth.users parity** — the count of destination `auth.users` accounts
+   must equal the count of `public.users` rows with `auth_user_id` set.
+   A mismatch means an Auth account was created without a matching profile
+   row, or vice versa.
+
+4. **FK completeness** — for every enforced FK in the migrated schema,
+   fetches all non-null child-column values from the destination and confirms
+   each one resolves to a row in the parent table. Covers all 8 FK
+   relationships (push_subscriptions→users, rows→sections,
+   employee_documents/expense_claims/salary_adjustments→team_members,
+   invoices→clients, invoice_items/invoice_payments→invoices).
+
+5. **Section remap verification** — confirms zero rows in the destination
+   `rows` table reference any of the 10 excluded section IDs (the two that
+   had dependent rows were remapped to their winners by phase4-02), and that
+   both remap-target sections (`e8ee675d`, `3d88c00c`) exist in the
+   destination.
+
+### How to run
+
+```bash
+npx tsx scripts/phase4-03-verify-migration.ts
+```
+
+The script prints:
+1. A row-count diff table (source / excluded / expected / dest / status per table).
+2. Per-check `[PASS]` / `[FAIL]` lines for checks 2-5.
+3. A full summary listing every check with its status and detail.
+4. A final `VERIFICATION: PASS` or `VERIFICATION: FAIL` line.
+
+Exits `0` if every check passes, `1` if any check fails. Safe to re-run as
+many times as needed — fully read-only.
+
+### Security rules — do not break these
+
+- **Never** commit `.env.phase4.local` or any service role key to git.
+- This script never writes to either project, never creates Auth users, and
+  never prints a service-role key or plaintext password — only project refs,
+  row counts, and UUIDs.
+- The identity guard rejects any destination ref that matches old-JSR or
+  TAC's project ref, regardless of what `EXPECTED_DEST_PROJECT_REF` says.
