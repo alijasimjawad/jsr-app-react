@@ -38,6 +38,7 @@ drop table if exists public.projects cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.sites cascade;
 drop table if exists public.revenue cascade;
+drop table if exists public.project_expenses cascade;
 drop table if exists public.sections cascade;
 drop table if exists public.daily_activities cascade;
 drop table if exists public.general_expenses cascade;
@@ -46,13 +47,19 @@ drop table if exists public.clients cascade;
 drop table if exists public.team_members cascade;
 drop table if exists public.users cascade;
 
+-- Also drops the shared trigger function added by the Phase 4 schema patch
+-- (rows_updated_at's backing function) — cascade on the `rows` table drop
+-- above removes the trigger itself, but the function object persists until
+-- dropped explicitly.
+drop function if exists public.update_updated_at();
+
 -- Not dropping the pgcrypto / uuid-ossp extensions — harmless to leave
 -- enabled, and other Supabase-managed schemas may depend on pgcrypto.
 
 -- ============================================================================
 -- OPTIONAL — wipe test Auth accounts too. Commented out on purpose. Only
 -- uncomment and run this if you specifically want to clear Supabase Auth
--- users created during staging testing (e.g. after testing Phase 3 Step 3's
+-- users created during staging testing (e.g. after testing Phase 4's
 -- Auth migration script against staging). Never run this anywhere except
 -- the staging project.
 -- ============================================================================

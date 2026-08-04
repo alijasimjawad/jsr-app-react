@@ -7,13 +7,15 @@
 -- 2C audit file.
 -- ============================================================================
 
--- 1. All 24 expected tables exist (13 live-column-confirmed old-JSR tables
---    + 3 old-JSR-derived tables with inferred columns [sections, revenue,
---    rows] = 16 old-JSR-derived tables, plus 8 React-only tables = 24) —
---    this returns 24 rows if everything in 01-03 ran cleanly. Anything
---    missing shows up as absent from the list. (Corrected — an earlier
---    draft of this comment said 25, which didn't match the actual table
---    count; caught during pre-execution review.)
+-- 1. All 25 expected tables exist (14 live-column-confirmed old-JSR tables
+--    + `sections`/`rows` now also fully live-confirmed via the original
+--    supabase_setup.sql + `revenue` still partly inferred = 17 old-JSR-
+--    derived tables, plus 8 React-only tables = 25) — this returns 25 rows
+--    if everything in 01-03 ran cleanly. Anything missing shows up as
+--    absent from the list. (Table count history: an earlier draft said 25,
+--    corrected to 24 during pre-execution review, then corrected again to
+--    25 once `project_expenses` was found missing during Phase 4 planning
+--    — see STAGING_EXECUTION_CHECKLIST.md section 1.)
 select table_name
 from information_schema.tables
 where table_schema = 'public'
@@ -27,6 +29,7 @@ union all select 'team_members', count(*) from public.team_members
 union all select 'clients', count(*) from public.clients
 union all select 'activity_log', count(*) from public.activity_log
 union all select 'general_expenses', count(*) from public.general_expenses
+union all select 'project_expenses', count(*) from public.project_expenses
 union all select 'daily_activities', count(*) from public.daily_activities
 union all select 'sections', count(*) from public.sections
 union all select 'revenue', count(*) from public.revenue
@@ -110,3 +113,21 @@ select count(*) as auth_users_count from auth.users;
 -- 8. Extensions confirmed present (needed for users.id's uuid_generate_v4()
 --    default from file 01).
 select extname from pg_extension where extname in ('pgcrypto','uuid-ossp');
+
+-- 9. rows_updated_at trigger exists (Phase 4 schema patch — confirms the
+--    update_updated_at() function + trigger from file 02 landed).
+select trigger_name, event_manipulation, event_object_table, action_timing
+from information_schema.triggers
+where trigger_schema = 'public'
+  and trigger_name    = 'rows_updated_at';
+-- Expect exactly 1 row: rows_updated_at | UPDATE | rows | BEFORE.
+
+-- 10. users.password is nullable (Phase 4 requirement — migrated rows must
+--     be insertable with password = null; confirms the file 01 correction
+--     landed and wasn't left NOT NULL like live JSR's real column).
+select column_name, is_nullable
+from information_schema.columns
+where table_schema = 'public'
+  and table_name    = 'users'
+  and column_name   = 'password';
+-- Expect is_nullable = 'YES'.

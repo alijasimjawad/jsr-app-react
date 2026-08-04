@@ -39,7 +39,7 @@ alter table public.team_members
 --
 -- PROVISIONAL — approved to keep as nullable/unique/FK-to-auth.users/ON
 -- DELETE SET NULL for now, but this definition is not final. It has not
--- been exercised against a real Auth migration yet (that's Phase 3 Step 3,
+-- been exercised against a real Auth migration yet (that's Phase 4,
 -- still ahead). Treat it as subject to change once Auth migration testing
 -- against this staging project confirms the actual linkage behavior needed
 -- (e.g. whether SET NULL vs. CASCADE is right, whether it should stay

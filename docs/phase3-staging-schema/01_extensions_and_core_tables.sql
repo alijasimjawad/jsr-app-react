@@ -33,10 +33,20 @@ create extension if not exists "uuid-ossp";
 
 -- ── users (base columns only — auth_user_id + profile columns added in 04) ─
 -- Live-confirmed via docs/schema-audit-results/12_missing_core_tables_schema.csv
+--
+-- `password` is nullable here, NOT `not null` like live JSR's real column —
+-- an intentional deviation approved as part of the Phase 4 schema patch.
+-- Phase 4's Auth migration uses each source password exactly once, as input
+-- to auth.admin.createUser(), and never writes it into this column at the
+-- destination — migrated rows get password = null. Nullable is required for
+-- that insert to succeed. Plan is to drop this column entirely once Auth
+-- migration + rollback testing are both verified working against this
+-- staging project; keeping it (nullable, unpopulated after migration) for
+-- now rather than dropping it up front.
 create table if not exists public.users (
   id           uuid        primary key default uuid_generate_v4(),
   username     text        not null unique,
-  password     text        not null,
+  password     text,
   role         text        not null default 'user',
   created_at   timestamptz default now(),
   full_name    text,
@@ -137,22 +147,24 @@ create table if not exists public.daily_activities (
 );
 
 -- ── sections ─────────────────────────────────────────────────────────────
--- NOT live-column-confirmed (see file header note). Based on Phase 2B's
--- static-file/React-code inference, cross-checked against this table's
--- live-confirmed metadata: single `id` PK (primary_keys.csv), a unique
--- constraint on (project_name, section_name) (unique_constraints.csv), and
--- an index named sections_project_idx (indexes.csv) implying a
--- project-related column is indexed on its own too. Recommend confirming
--- with a live column export before running this file — see checklist.
+-- RESOLVED as part of the Phase 4 schema patch: the original
+-- /Users/alijasim/Desktop/JSR/supabase_setup.sql (old JSR's own real
+-- schema-creation script) was located and confirms every column below,
+-- superseding the Phase 2B static-file/React-code inference this table
+-- previously relied on. `section_label`, `columns`, `is_custom`, and
+-- `is_deleted` are all NOT NULL live — this file previously left them
+-- nullable before that primary source was found; corrected now.
+-- `custom_columns` stays nullable, matching the original (added there via a
+-- later separate ALTER, same as here).
 create table if not exists public.sections (
   id              uuid        primary key default gen_random_uuid(),
   project_name    text        not null,
   section_name    text        not null,
-  section_label   text,
-  columns         jsonb       default '[]'::jsonb,
+  section_label   text        not null,
+  columns         jsonb       not null default '[]'::jsonb,
   custom_columns  jsonb       default '[]'::jsonb,
-  is_custom       boolean     default false,
-  is_deleted      boolean     default false,
+  is_custom       boolean     not null default false,
+  is_deleted      boolean     not null default false,
   created_at      timestamptz default now(),
   constraint sections_project_section_unique unique (project_name, section_name)
 );
@@ -256,4 +268,40 @@ create table if not exists public.saved_points (
   longitude    double precision not null,
   is_active    boolean          not null default true,
   created_at   timestamptz      not null default now()
+);
+
+-- ── project_expenses (old-JSR table, added by the Phase 4 schema patch —
+--    was MISSING from every earlier pass of this package) ──────────────────
+-- Live-confirmed via docs/schema-audit-results/11b_flagged_tables_schema_
+-- complete.csv (17 columns, full types/nullability) and
+-- a_approx_row_counts.csv (169 rows — real production data, not dead).
+-- Actively read/written today by src/pages/FinProjExp.tsx
+-- (`.from('project_expenses').select('*')/.insert()/.update()/.delete()`),
+-- and referenced by FinDashboard.tsx, FinReport.tsx, FinExpClaims.tsx, and
+-- BackupRestore.tsx. No FK to or from any other table
+-- (docs/schema-audit-results/foreign_keys.csv has no row for it either
+-- direction) — flat table, same shape family as general_expenses above.
+-- This was never listed in STAGING_EXECUTION_CHECKLIST.md's "intentionally
+-- excluded" section either (that section only names expenses,
+-- expense_budgets, work_log as confirmed-dead) — it fell through every
+-- earlier audit pass until Phase 4 planning cross-checked
+-- a_approx_row_counts.csv against this package's table list.
+create table if not exists public.project_expenses (
+  id             uuid        primary key default gen_random_uuid(),
+  project_name   text        not null,
+  description    text        not null,
+  category       text,
+  amount         numeric     not null,
+  expense_date   date,
+  month          integer,
+  year           integer,
+  notes          text,
+  added_by       text,
+  created_at     timestamptz default now(),
+  activity_date  date,
+  site_id        text,
+  employee_ids   jsonb       default '[]'::jsonb,
+  accommodation  text        default 'Returned Home',
+  submitted_by   text,
+  approved_by    text
 );

@@ -50,3 +50,10 @@ login_redesign_prompt.md
 # sandbox filesystem limitation). Not real dependencies — safe to delete
 # manually from Finder.
 _stale_node_modules_*
+
+# Phase 2C/2D raw schema-audit CSV exports from the live JSR production
+# Supabase project. Structural metadata only (columns/PKs/FKs/indexes/RLS
+# policy definitions/row counts) — no secrets, no row data — but it
+# describes live production scale and current security posture, so by
+# decision it stays local-only rather than in git history.
+docs/schema-audit-results/

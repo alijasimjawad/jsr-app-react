@@ -96,23 +96,43 @@ create table if not exists public.invoices (
 );
 
 -- ── rows (→ sections) ────────────────────────────────────────────────────
--- NOT live-column-confirmed beyond id/PK, section_id/FK
--- (foreign_keys.csv confirms `rows.section_id → sections.id`), and two
--- named indexes (rows_section_id_idx, rows_section_order_idx — implying a
--- row-ordering column exists). The rest of the column list below is Phase
--- 2B's inference from React's code, not a live export. Recommend
--- confirming with a live column export before running this file — see
--- checklist. `data` as jsonb is a guess based on this table's apparent
--- purpose (a generic per-section data-grid row store) — verify before
--- relying on it.
+-- RESOLVED as part of the Phase 4 schema patch: the original
+-- /Users/alijasim/Desktop/JSR/supabase_setup.sql confirms every column and
+-- constraint below, superseding the Phase 2B inference this table
+-- previously relied on (beyond id/PK and the section_id FK, which
+-- foreign_keys.csv already confirmed). Three corrections against the
+-- previous version of this file:
+--   1. section_id now has ON DELETE CASCADE (previously no ON DELETE
+--      clause, which defaults to NO ACTION — deleting a section would have
+--      been blocked by its remaining rows instead of cleaning them up).
+--   2. data / row_order are now NOT NULL with the same defaults as the
+--      original (previously nullable, row_order had no default).
+--   3. A shared `update_updated_at()` trigger function now keeps
+--      `updated_at` current on every row change (previously absent
+--      entirely — updated_at existed as a column but nothing maintained
+--      it after the initial insert).
 create table if not exists public.rows (
   id          uuid        primary key default gen_random_uuid(),
-  section_id  uuid        references public.sections(id),
-  data        jsonb       default '{}'::jsonb,
-  row_order   integer,
+  section_id  uuid        references public.sections(id) on delete cascade,
+  data        jsonb       not null default '{}'::jsonb,
+  row_order   integer     not null default 0,
   created_at  timestamptz default now(),
   updated_at  timestamptz default now()
 );
+
+-- Auto-maintained updated_at — matches original supabase_setup.sql exactly.
+create or replace function public.update_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists rows_updated_at on public.rows;
+create trigger rows_updated_at
+  before update on public.rows
+  for each row execute procedure public.update_updated_at();
 
 -- ── invoice_items (→ invoices) ───────────────────────────────────────────
 -- Live-confirmed via docs/schema-audit-results/all_columns.csv

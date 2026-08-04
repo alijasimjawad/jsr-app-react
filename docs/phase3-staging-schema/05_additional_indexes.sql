@@ -12,8 +12,15 @@
 -- These 3 are the only non-PK/non-unique indexes recorded for old JSR's
 -- live database (out of 28 total index rows in the export — the rest are
 -- the automatic PK/unique indexes already created above).
+--
+-- rows_section_order_idx corrected by the Phase 4 schema patch: previously
+-- built as a single-column index on row_order alone; the original
+-- supabase_setup.sql indexes it as a composite (section_id, row_order),
+-- which is the shape that actually serves the app's real query pattern
+-- (fetch a section's rows in order) — a single-column index on row_order
+-- doesn't help that query at all.
 create index if not exists rows_section_id_idx    on public.rows (section_id);
-create index if not exists rows_section_order_idx on public.rows (row_order);
+create index if not exists rows_section_order_idx on public.rows (section_id, row_order);
 create index if not exists sections_project_idx   on public.sections (project_name);
 
 -- ── Added for staging usability — NOT from the live production audit ────

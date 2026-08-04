@@ -14,34 +14,42 @@ approve, then run each file yourself in the Supabase SQL Editor, in order.
 
 ## 1. Data confidence — not every table below is equally certain
 
-13 tables are built from a **live column export** (Phase 2C/2D audit CSVs) —
+14 tables are built from a **live column export** (Phase 2C/2D audit CSVs) —
 high confidence: `users`, `team_members`, `clients`, `activity_log`,
-`general_expenses`, `daily_activities`, `employee_documents`,
-`expense_claims`, `salary_adjustments`, `push_subscriptions`, `invoices`,
-`invoice_items`, `invoice_payments`.
-(Corrected count — an earlier draft of this checklist said 14, which didn't
-match the 13 tables actually listed; caught during pre-execution review.)
+`general_expenses`, `project_expenses`, `daily_activities`,
+`employee_documents`, `expense_claims`, `salary_adjustments`,
+`push_subscriptions`, `invoices`, `invoice_items`, `invoice_payments`.
+(`project_expenses` added by the Phase 4 schema patch — see below. Original
+count here was 13; corrected count before that was drafted as 14 by mistake
+too, which didn't match the 13 tables then actually listed; caught during
+pre-execution review. Now genuinely 14, with `project_expenses` added.)
 
-**3 tables were never fully live-column-confirmed**, despite being labeled
-"confirmed compatible" in the Phase 2D closure report — that labeling was a
-mistake carried over from Phase 2B's earlier static-file inference and
-should have been caught sooner:
+**`sections` and `rows` were never fully live-column-confirmed until the
+Phase 4 schema patch** — the original
+`/Users/alijasim/Desktop/JSR/supabase_setup.sql` (old JSR's own real
+schema-creation script) was located during Phase 4 planning and confirms
+every column for both tables, closing the gap that had followed this
+package since Phase 2B:
 
-- `sections` — only `id` (PK) and the `(project_name, section_name)` unique
-  constraint are live-confirmed. The rest of its columns are Phase 2B's
-  inference from React's code.
-- `revenue` — only `id` (PK) is live-confirmed. No FK, no unique constraint,
-  no extra index recorded for it anywhere in the audit. Columns are Phase
-  2B's inference from a partial `.select()` call.
-- `rows` — `id` (PK) and `section_id` (FK → sections) are live-confirmed,
-  plus two named indexes implying a row-ordering column exists. The rest
-  (`data jsonb`, `row_order`, timestamps) is inferred.
+- `sections` — now fully confirmed: `section_label`, `columns`, `is_custom`,
+  and `is_deleted` are all `NOT NULL` live (previously left nullable here,
+  as Phase 2B's inference from React's code, before this primary source was
+  found — corrected in `01_extensions_and_core_tables.sql`).
+- `rows` — now fully confirmed: `data`/`row_order` are `NOT NULL` with
+  defaults, `section_id` has `ON DELETE CASCADE`, and a trigger keeps
+  `updated_at` current (all previously missing — corrected in
+  `02_dependent_tables.sql`, plus the `rows_section_order_idx` composite-index
+  fix in `05_additional_indexes.sql`).
 
-**Recommendation:** before running `01_extensions_and_core_tables.sql` and
-`02_dependent_tables.sql`, consider one more small live query (scoped to
-just these 3 table names, same pattern as the earlier `11b`/`12` re-exports)
-to close this gap with certainty. Not required — staging is disposable if
-these guesses are wrong — but cheap insurance before building on top of them.
+**`revenue` is still not fully live-column-confirmed** — only `id` (PK) is
+live-confirmed (primary_keys.csv). No FK, no unique constraint, no extra
+index recorded for it anywhere in the audit, and it doesn't appear in the
+original `supabase_setup.sql` at all (that file predates whatever added this
+table). Columns are still Phase 2B's inference from a partial `.select()`
+call. **Recommendation unchanged:** before running
+`01_extensions_and_core_tables.sql`, consider one more small live query
+scoped to just this table to close the gap with certainty. Not required —
+staging is disposable if the guess is wrong — but cheap insurance.
 
 **4 tables have no live JSR equivalent at all** (`cars`, `field_trips`,
 `trip_participants`, `attendance`) — reverse-engineered from
@@ -49,6 +57,23 @@ these guesses are wrong — but cheap insurance before building on top of them.
 TypeScript interfaces), not from any database export, since these features
 don't exist in old JSR. See the comments in
 `03_new_react_only_tables.sql` for the specific files each column came from.
+
+**`project_expenses` was missing from this entire package until the Phase 4
+schema patch caught it** — it is not new/inferred like the tables above, it
+is a fully live-confirmed table (17 columns, via
+`docs/schema-audit-results/11b_flagged_tables_schema_complete.csv`) with 169
+real production rows (`a_approx_row_counts.csv`) that simply never got added
+to files 01-06 or listed as an intentional exclusion in section 2 below. Now
+added to `01_extensions_and_core_tables.sql` and `06_enable_rls_no_
+policies.sql`.
+
+**`users.password` is now nullable** (was `NOT NULL`, matching live JSR) —
+also part of the Phase 4 schema patch, not a live-data discrepancy. Phase 4's
+Auth migration writes each source password into Supabase Auth exactly once
+and never copies it into this column at the destination; migrated rows get
+`password = null`. See the comment above the `users` table in
+`01_extensions_and_core_tables.sql` for the full rationale, including the
+plan to drop this column entirely once Auth migration is verified working.
 
 ## 2. What's intentionally excluded (confirm this matches your intent)
 
@@ -82,45 +107,51 @@ don't exist in old JSR. See the comments in
 Run each file's full contents as one paste in the SQL Editor, check for
 errors, then move to the next:
 
-1. `01_extensions_and_core_tables.sql` — extensions + 12 independent tables
+1. `01_extensions_and_core_tables.sql` — extensions + 13 independent tables
    (`users`, `team_members`, `clients`, `activity_log`, `general_expenses`,
-   `daily_activities`, `sections`, `revenue`, `sites`, `app_settings`,
-   `projects`, `saved_points`).
+   `project_expenses`, `daily_activities`, `sections`, `revenue`, `sites`,
+   `app_settings`, `projects`, `saved_points`).
 2. `02_dependent_tables.sql` — 8 tables with FKs into file 01's tables
    (`employee_documents`, `expense_claims`, `salary_adjustments`,
    `push_subscriptions`, `invoices`, `rows`, `invoice_items`,
-   `invoice_payments`).
+   `invoice_payments`), plus the `update_updated_at()` trigger function and
+   `rows_updated_at` trigger (added by the Phase 4 schema patch).
 3. `03_new_react_only_tables.sql` — 4 more React-only tables with FKs into
    files 01-02 (`cars`, `field_trips`, `trip_participants`, `attendance`).
 4. `04_required_column_additions.sql` — your items 4 & 5: `username` on
    `team_members`, `auth_user_id` + 9 profile columns on `users`.
 5. `05_additional_indexes.sql` — the 3 confirmed-live extra indexes plus 5
-   new ones for the React-only tables' FK columns.
+   new ones for the React-only tables' FK columns. `rows_section_order_idx`
+   is now a composite `(section_id, row_order)` index (corrected by the
+   Phase 4 schema patch — previously single-column `(row_order)`).
 6. `06_enable_rls_no_policies.sql` — **do not run yet.** Enables RLS on all
-   24 tables with zero policies attached. See the file's own header for why
+   25 tables with zero policies attached. See the file's own header for why
    this must not run before Auth policies exist (it would block all API
    access). Provided now so it's ready for whenever Auth migration/policy
    work is approved — not part of this baseline's execution.
 
-That's **24 tables total** (corrected — an earlier draft of this section
-said 25, which didn't match the actual table count; caught during
-pre-execution review): 13 live-column-confirmed old-JSR tables + 3
-old-JSR-derived tables with inferred columns (`sections`, `revenue`, `rows`)
-= 16 old-JSR-derived tables, plus 8 new React-only tables (`sites`,
-`app_settings`, `projects`, `saved_points`, `cars`, `field_trips`,
-`trip_participants`, `attendance`) = 24.
+That's **25 tables total** (corrected again — this was 24 as of the last
+review, then `project_expenses` was found missing during Phase 4 planning
+and added; see section 1 above): 14 live-column-confirmed old-JSR tables + 2
+old-JSR-derived tables now fully confirmed via the original
+`supabase_setup.sql` (`sections`, `rows`) + 1 old-JSR-derived table still
+partly inferred (`revenue`) = 17 old-JSR-derived tables, plus 8 new
+React-only tables (`sites`, `app_settings`, `projects`, `saved_points`,
+`cars`, `field_trips`, `trip_participants`, `attendance`) = 25.
 
 ## 4. After running 01-05
 
 6. Run `verify_staging_schema.sql`, section by section, and confirm:
-   - Section 1 lists all 24 tables.
+   - Section 1 lists all 25 tables.
    - Section 2 shows 0 rows everywhere except `app_settings` (1) and
      `projects` (6).
    - Section 3 returns 11 rows (confirms file 04 applied fully).
    - Sections 4-6 match what you expect from the confirmed FK/unique/index
      lists in `docs/schema-audit-results/`.
    - Section 7 confirms `auth.users` is still empty (expected — no Auth
-     migration has run against staging yet, that's Phase 3 Step 3, later).
+     migration has run against staging yet, that's Phase 4, ahead).
+   - Section 9 confirms the `rows_updated_at` trigger exists.
+   - Section 10 confirms `users.password` is nullable (Phase 4 requirement).
 
 ## 5. If something goes wrong
 
