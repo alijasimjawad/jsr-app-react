@@ -250,13 +250,19 @@ create table if not exists public.projects (
 -- STAGING CONFIGURATION SEED DATA — not a production data migration. This is
 -- the fixed list of projects the app's UI is built around (approved, item 5
 -- of the corrections list), not live/business records.
+--
+-- UPDATED per the "delete MOJ + General, add TAC + MRC" request: moj/general
+-- are removed from this seed list (any already-provisioned database keeps
+-- those rows soft-deactivated via 08_patch_projects_tac_mrc.sql instead of
+-- deleting them). tac/mrc take the same sort_order slots (5, 6) they
+-- occupied, both with has_sections = true.
 insert into public.projects (key, display_name, has_sections, sort_order) values
   ('zain',   'Zain Project',   true,  1),
   ('nokia',  'Nokia Project',  true,  2),
   ('huawei', 'Huawei Project', true,  3),
   ('ipt',    'IPT Project',    true,  4),
-  ('moj',    'MOJ Project',    true,  5),
-  ('general','General',        false, 6)
+  ('tac',    'TAC Project',    true,  5),
+  ('mrc',    'MRC Project',    true,  6)
 on conflict (key) do nothing;
 
 -- ── saved_points (React-only, new, empty) ───────────────────────────────
