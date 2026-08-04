@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { isSupabaseConfigured } from './lib/supabase';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
@@ -42,7 +43,36 @@ function RoleRedirect() {
   return <Navigate to="/attendance" replace />;
 }
 
+// Shown instead of the app when VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+// are missing, so a blank or mid-migration .env fails safely with a clear
+// message rather than crashing or silently reaching another project.
+function ConfigurationMissing() {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      textAlign: 'center',
+    }}>
+      <div style={{ maxWidth: 460 }}>
+        <h1 style={{ fontSize: 20, marginBottom: 12 }}>Configuration required</h1>
+        <p style={{ color: '#555', lineHeight: 1.5, margin: 0 }}>
+          This app isn't connected to a Supabase project yet. Set{' '}
+          <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>{' '}
+          in your <code>.env</code> file (see <code>.env.example</code>), then
+          restart the dev server or redeploy.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  if (!isSupabaseConfigured) return <ConfigurationMissing />;
+
   return (
     <AuthProvider>
       <BrowserRouter>
