@@ -55,6 +55,28 @@ const FINAL_ATP_OPTIONS = ['', 'Pending', 'Accepted'];
 // Integration Status field options.
 const INTEGRATION_STATUS_OPTIONS = ['', 'Integrated'];
 
+// Converts a raw cell value from XLSX's `raw: true` read into the plain
+// string we store. Deliberately does NOT go through the source workbook's
+// display number format (that's what `sheet_to_json({ raw: false })` used to
+// do) — that formatting step is what previously turned a plain numeric Site
+// ID like 5459 into "5,459." whenever the Excel column carried a custom
+// numeric display format (thousands separator, decimal-point placeholder
+// with zero decimal digits, etc.). Numbers are converted with String() so no
+// locale/thousands grouping is ever introduced; real Date cells (only
+// possible because the read used `cellDates: true`) are formatted as
+// yyyy-mm-dd to match the app's existing date-column convention.
+function formatImportCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof v === 'number') return String(v);
+  return String(v);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface GridRow {
@@ -373,19 +395,30 @@ export default function NetworkScopes() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const wb = XLSX.read(ev.target!.result as ArrayBuffer, { type: 'array', cellDates: false });
+        // `cellDates: true` + `raw: true` pulls the actual underlying cell
+        // value (number/Date/string) instead of asking the xlsx library to
+        // render it through the source workbook's display number format.
+        // That rendering step (the old `raw: false` + `dateNF` combo) is
+        // what caused numeric ID columns to come through as e.g. "5,459."
+        // whenever the Excel column happened to carry a custom numeric
+        // display format (thousands separator, trailing decimal point with
+        // zero decimal places, etc.) — the format was being applied to
+        // every column, not just dates. formatImportCell() below re-applies
+        // yyyy-mm-dd formatting to real Date cells only, and converts plain
+        // numbers with String() so no locale/thousands formatting sneaks in.
+        const wb = XLSX.read(ev.target!.result as ArrayBuffer, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-          header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '',
+          header: 1, raw: true, defval: '',
         });
 
         if (!raw || raw.length < 1) { showToast('Excel file appears to be empty', false); return; }
-        const impHeaders = (raw[0] as unknown[]).map(h => String(h ?? '').trim());
+        const impHeaders = (raw[0] as unknown[]).map(h => formatImportCell(h).trim());
         if (impHeaders.every(h => h === '')) { showToast('No headers found in row 1', false); return; }
 
         const impRows: string[][] = (raw.slice(1) as unknown[][])
-          .filter(r => (r as unknown[]).some(v => String(v ?? '').trim() !== ''))
-          .map(r => impHeaders.map((_, i) => String((r as unknown[])[i] ?? '')));
+          .filter(r => (r as unknown[]).some(v => formatImportCell(v).trim() !== ''))
+          .map(r => impHeaders.map((_, i) => formatImportCell((r as unknown[])[i])));
 
         if (impRows.length === 0) { showToast('No data rows found in the file', false); return; }
 
