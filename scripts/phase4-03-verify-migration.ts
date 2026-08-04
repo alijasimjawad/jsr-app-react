@@ -6,9 +6,12 @@
  * single-row lookups, or exhaustive FK scans.
  *
  * Checks performed (in order):
- *   1. Row-count parity — source count vs destination count for every migrated
- *      table, accounting for the 10 sections rows intentionally excluded via
- *      skipIds in phase4-02. Any count mismatch is a FAIL.
+ *   1. Row-count parity — for tables without seed data: source count must equal
+ *      dest count. For sections: ID membership check — all 18 expected source
+ *      section IDs (28 source − 10 excluded) must be present in the destination.
+ *      Extra destination rows (pre-existing seed sections seeded during Phase 3
+ *      schema setup, including the remap targets) are reported as informational
+ *      and are not a failure.
  *   2. users integrity — every dest public.users row has auth_user_id IS NOT
  *      NULL and password IS NULL.
  *   3. auth.users parity — dest auth.users count equals the count of
@@ -73,42 +76,6 @@ const EXPECTED_DEST_PROJECT_REF        = process.env.EXPECTED_DEST_PROJECT_REF;
 
 // ── 3. Migration facts — must stay in sync with phase4-02's TIERS ────────────
 
-// Every table migrated by phase4-01 (users) and phase4-02 (all others).
-// excludedCount = rows skipped via skipIds in phase4-02 that were never written
-// to the destination. Expected dest count = source count − excludedCount.
-const MIGRATED_TABLES: readonly { name: string; excludedCount: number }[] = [
-  { name: 'users',               excludedCount: 0  },
-  { name: 'team_members',        excludedCount: 0  },
-  { name: 'clients',             excludedCount: 0  },
-  { name: 'sections',            excludedCount: 10 }, // 10 excluded via skipIds
-  { name: 'activity_log',        excludedCount: 0  },
-  { name: 'general_expenses',    excludedCount: 0  },
-  { name: 'daily_activities',    excludedCount: 0  },
-  { name: 'revenue',             excludedCount: 0  },
-  { name: 'project_expenses',    excludedCount: 0  },
-  { name: 'employee_documents',  excludedCount: 0  },
-  { name: 'expense_claims',      excludedCount: 0  },
-  { name: 'salary_adjustments',  excludedCount: 0  },
-  { name: 'push_subscriptions',  excludedCount: 0  },
-  { name: 'invoices',            excludedCount: 0  },
-  { name: 'rows',                excludedCount: 0  },
-  { name: 'invoice_items',       excludedCount: 0  },
-  { name: 'invoice_payments',    excludedCount: 0  },
-];
-
-// Every enforced FK in the migrated schema (from foreign_keys.csv).
-// All checks run against the destination — verifying migrated data is intact.
-const FK_CHECKS: readonly { child: string; column: string; parent: string }[] = [
-  { child: 'push_subscriptions', column: 'user_id',    parent: 'users'        },
-  { child: 'rows',               column: 'section_id', parent: 'sections'     },
-  { child: 'employee_documents', column: 'member_id',  parent: 'team_members' },
-  { child: 'expense_claims',     column: 'member_id',  parent: 'team_members' },
-  { child: 'salary_adjustments', column: 'member_id',  parent: 'team_members' },
-  { child: 'invoices',           column: 'client_id',  parent: 'clients'      },
-  { child: 'invoice_items',      column: 'invoice_id', parent: 'invoices'     },
-  { child: 'invoice_payments',   column: 'invoice_id', parent: 'invoices'     },
-];
-
 // The 10 section IDs excluded from migration via phase4-02's skipIds.
 // No destination rows row should reference any of these — the two that had
 // dependents (55f63cb0 and b393a48e) were remapped to the winner IDs below.
@@ -129,6 +96,56 @@ const EXCLUDED_SECTION_IDS: readonly string[] = [
 const REMAP_TARGETS: readonly { id: string; label: string }[] = [
   { id: 'e8ee675d-3990-402a-aeb5-0ddbfc66c53a', label: 'zain/ftk winner' },
   { id: '3d88c00c-9309-40c5-96d8-04af7b514c31', label: 'ipt/tdd winner'  },
+];
+
+// Two verification modes for Check 1:
+//
+//   count mode  (excludedIds absent): dest count must equal source count.
+//               Used for all tables that had no pre-existing seed data.
+//
+//   id mode     (excludedIds present): all (source IDs − excludedIds) must
+//               exist in the destination. Extra dest IDs (pre-existing seed
+//               rows seeded during Phase 3 schema setup, including the two
+//               remap targets) are reported but are NOT a failure.
+//               Used for `sections`, which had 13 seed rows already present
+//               in the destination before the migration ran.
+interface MigratedTableConfig {
+  name: string;
+  excludedIds?: readonly string[];
+}
+
+// Every table migrated by phase4-01 (users) and phase4-02 (all others).
+const MIGRATED_TABLES: readonly MigratedTableConfig[] = [
+  { name: 'users'              },
+  { name: 'team_members'       },
+  { name: 'clients'            },
+  { name: 'sections', excludedIds: EXCLUDED_SECTION_IDS },
+  { name: 'activity_log'       },
+  { name: 'general_expenses'   },
+  { name: 'daily_activities'   },
+  { name: 'revenue'            },
+  { name: 'project_expenses'   },
+  { name: 'employee_documents' },
+  { name: 'expense_claims'     },
+  { name: 'salary_adjustments' },
+  { name: 'push_subscriptions' },
+  { name: 'invoices'           },
+  { name: 'rows'               },
+  { name: 'invoice_items'      },
+  { name: 'invoice_payments'   },
+];
+
+// Every enforced FK in the migrated schema (from foreign_keys.csv).
+// All checks run against the destination — verifying migrated data is intact.
+const FK_CHECKS: readonly { child: string; column: string; parent: string }[] = [
+  { child: 'push_subscriptions', column: 'user_id',    parent: 'users'        },
+  { child: 'rows',               column: 'section_id', parent: 'sections'     },
+  { child: 'employee_documents', column: 'member_id',  parent: 'team_members' },
+  { child: 'expense_claims',     column: 'member_id',  parent: 'team_members' },
+  { child: 'salary_adjustments', column: 'member_id',  parent: 'team_members' },
+  { child: 'invoices',           column: 'client_id',  parent: 'clients'      },
+  { child: 'invoice_items',      column: 'invoice_id', parent: 'invoices'     },
+  { child: 'invoice_payments',   column: 'invoice_id', parent: 'invoices'     },
 ];
 
 // ── 4. Report plumbing ────────────────────────────────────────────────────────
@@ -156,6 +173,12 @@ async function getCount(client: SupabaseClient, table: string): Promise<number> 
     .select('*', { head: true, count: 'exact' });
   if (error) throw new Error(`count(${table}): ${error.message}`);
   return count ?? 0;
+}
+
+async function fetchIds(client: SupabaseClient, table: string): Promise<Set<string>> {
+  const ids = (await fetchColumnValues(client, table, 'id'))
+    .filter((v): v is string => v !== null);
+  return new Set(ids);
 }
 
 async function fetchColumnValues(
@@ -278,8 +301,8 @@ async function main(): Promise<void> {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // ── Check 1: Row-count parity ──────────────────────────────────────────────
-  console.log('── Check 1: Row-count parity ─────────────────────────────────────────────\n');
+  // ── Check 1: Row-count / ID-membership parity ─────────────────────────────
+  console.log('── Check 1: Row-count / ID-membership parity ────────────────────────────\n');
 
   interface ParityRow {
     table: string;
@@ -287,36 +310,74 @@ async function main(): Promise<void> {
     excluded: number;
     expected: number;
     dst: number;
+    ok: boolean;
+    note: string;
   }
 
   const parity: ParityRow[] = [];
-  let anyCountFail = false;
+  let anyParityFail = false;
 
-  for (const { name, excludedCount } of MIGRATED_TABLES) {
-    let src = 0;
-    let dst = 0;
-    try { src = await getCount(source, name); } catch (e) {
-      console.error(`  WARN: could not count source.${name}: ${e instanceof Error ? e.message : e}`);
+  for (const { name, excludedIds } of MIGRATED_TABLES) {
+    if (excludedIds) {
+      // ID membership mode — for tables with pre-existing seed data in dest.
+      let srcIds = new Set<string>();
+      let dstIds = new Set<string>();
+      try { srcIds = await fetchIds(source, name); } catch (e) {
+        console.error(`  WARN: could not fetch source.${name} IDs: ${e instanceof Error ? e.message : e}`);
+      }
+      try { dstIds = await fetchIds(dest, name); } catch (e) {
+        console.error(`  WARN: could not fetch dest.${name} IDs: ${e instanceof Error ? e.message : e}`);
+      }
+
+      const excludedSet  = new Set(excludedIds);
+      const expectedIds  = [...srcIds].filter(id => !excludedSet.has(id));
+      const missingIds   = expectedIds.filter(id => !dstIds.has(id));
+      const extraInDest  = [...dstIds].filter(id => !srcIds.has(id)).length;
+
+      const ok   = missingIds.length === 0;
+      const note = ok
+        ? `all ${expectedIds.length} migrated IDs present; ${extraInDest} seed row(s) also in dest`
+        : `${missingIds.length} migrated ID(s) missing from dest`;
+
+      if (!ok) anyParityFail = true;
+      parity.push({
+        table: name,
+        src: srcIds.size,
+        excluded: excludedIds.length,
+        expected: expectedIds.length,
+        dst: dstIds.size,
+        ok,
+        note,
+      });
+    } else {
+      // Count mode — for tables with no pre-existing seed data.
+      let src = 0;
+      let dst = 0;
+      try { src = await getCount(source, name); } catch (e) {
+        console.error(`  WARN: could not count source.${name}: ${e instanceof Error ? e.message : e}`);
+      }
+      try { dst = await getCount(dest, name); } catch (e) {
+        console.error(`  WARN: could not count dest.${name}: ${e instanceof Error ? e.message : e}`);
+      }
+
+      const ok = dst === src;
+      if (!ok) anyParityFail = true;
+      parity.push({ table: name, src, excluded: 0, expected: src, dst, ok, note: '' });
     }
-    try { dst = await getCount(dest, name); } catch (e) {
-      console.error(`  WARN: could not count dest.${name}: ${e instanceof Error ? e.message : e}`);
-    }
-    const expected = src - excludedCount;
-    if (dst !== expected) anyCountFail = true;
-    parity.push({ table: name, src, excluded: excludedCount, expected, dst });
   }
 
-  // Render the count diff table.
+  // Render the parity table.
   const W = { tbl: 24, src: 7, excl: 9, exp: 9, dst: 6 };
-  const sep = `  ${'-'.repeat(W.tbl)} ${'-'.repeat(W.src)} ${'-'.repeat(W.excl)} ${'-'.repeat(W.exp)} ${'-'.repeat(W.dst)} ──────────────────────────────`;
+  const sep = `  ${'-'.repeat(W.tbl)} ${'-'.repeat(W.src)} ${'-'.repeat(W.excl)} ${'-'.repeat(W.exp)} ${'-'.repeat(W.dst)} ──────────────────────────────────────────`;
   console.log(
     `  ${'Table'.padEnd(W.tbl)} ${'Source'.padStart(W.src)} ${'Excluded'.padStart(W.excl)}` +
     ` ${'Expected'.padStart(W.exp)} ${'Dest'.padStart(W.dst)}  Status`,
   );
   console.log(sep);
   for (const r of parity) {
-    const ok     = r.dst === r.expected;
-    const status = ok ? 'PASS' : `FAIL (expected ${r.expected}, got ${r.dst})`;
+    const status = r.ok
+      ? `PASS${r.note ? ` (${r.note})` : ''}`
+      : `FAIL — ${r.note || `expected ${r.expected}, got ${r.dst}`}`;
     console.log(
       `  ${r.table.padEnd(W.tbl)} ${String(r.src).padStart(W.src)} ` +
       `${String(r.excluded || '').padStart(W.excl)} ` +
@@ -326,11 +387,11 @@ async function main(): Promise<void> {
   console.log(sep + '\n');
 
   record(
-    'Row-count parity (all migrated tables)',
-    anyCountFail ? 'FAIL' : 'PASS',
-    anyCountFail
+    'Row-count / ID-membership parity (all migrated tables)',
+    anyParityFail ? 'FAIL' : 'PASS',
+    anyParityFail
       ? 'one or more tables have unexpected dest counts — see table above'
-      : 'all 17 tables match expected counts',
+      : 'all 17 tables pass (counts match or all expected IDs present)',
   );
 
   // ── Check 2: users integrity ───────────────────────────────────────────────
