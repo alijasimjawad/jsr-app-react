@@ -30,10 +30,20 @@
  *   re-run after Ctrl-C or a partial failure — already-inserted rows are
  *   detected per table and skipped automatically.
  *
+ * SECTION DUPLICATE HANDLING (sections table only):
+ *   The destination has UNIQUE(project_name, section_name) on `sections`. The
+ *   source has 10 rows that collide with already-migrated rows because the source
+ *   contains both soft-deleted and active versions of the same section name in the
+ *   same project (no such constraint existed in the source). These 10 rows are
+ *   explicitly excluded via `skipIds` — they will never be attempted again.
+ *   Two of them (55f63cb0 and b393a48e) have dependent rows in the `rows` table;
+ *   those rows are migrated with `section_id` remapped to the active winner in
+ *   the destination via `columnRemaps` on the `rows` TableDef.
+ *
  * DRY RUN vs EXECUTE:
  *   Default: dry run — reads source, validates schemas and FKs, prints the
- *   per-table plan (source rows / to-insert / already-present), writes nothing.
- *   Pass `--execute` to perform the actual inserts.
+ *   per-table plan (source rows / excluded / to-insert / already-present), writes
+ *   nothing. Pass `--execute` to perform the actual inserts.
  *
  * PRE-WRITE VALIDATION (done upfront for all 16 tables before any writes):
  *   1. Source table is reachable and all expected columns exist.
@@ -41,10 +51,9 @@
  *   Any schema mismatch → the whole script aborts immediately, nothing written.
  *
  *   Per-table, just before writing:
- *   3. All non-null FK values from source rows exist in the relevant parent
- *      table. In dry-run mode the check runs against SOURCE (data-quality
- *      sanity check). In execute mode it runs against DESTINATION (confirms
- *      parent tier was fully migrated before touching this child table).
+ *   3. All non-null FK values from source rows (after remapping) exist in the
+ *      relevant parent table. In dry-run mode the check runs against SOURCE.
+ *      In execute mode it runs against DESTINATION.
  *   FK risk detected → the whole script aborts immediately, nothing further written.
  *
  * Usage:
@@ -98,30 +107,36 @@ const EXPECTED_DEST_PROJECT_REF        = process.env.EXPECTED_DEST_PROJECT_REF;
 
 // ── 3. CLI ────────────────────────────────────────────────────────────────────
 const EXECUTE           = process.argv.includes('--execute');
-const PAGE_SIZE         = 500;   // rows per paginated read
-const INSERT_BATCH_SIZE = 200;   // rows per insert call
-const FK_CHUNK_SIZE     = 400;   // max IDs per .in() query (URL-length safety)
+const PAGE_SIZE         = 500;
+const INSERT_BATCH_SIZE = 200;
+const FK_CHUNK_SIZE     = 400;
 
 // ── 4. Table definitions ──────────────────────────────────────────────────────
-// Column lists match REQUIRED_COLUMNS in phase4-00-preflight.ts exactly.
-// FKs list only enforced FK constraints (from docs/schema-audit-results/foreign_keys.csv).
-
 interface FKDef { column: string; parentTable: string; }
 
 interface TableDef {
   name: string;
   columns: string[];
   fks: FKDef[];
+  /** Source row IDs to always skip — never attempted in destination. */
+  skipIds?: ReadonlySet<string>;
+  /**
+   * Per-column value remaps applied before insert.
+   * Map<column, Map<sourceValue, destValue>>.
+   * Applied after skipIds filtering, before FK validation and insert.
+   */
+  columnRemaps?: Readonly<Record<string, ReadonlyMap<string, string>>>;
 }
 
+// Column lists match REQUIRED_COLUMNS in phase4-00-preflight.ts exactly,
+// except where noted. FKs list only enforced constraints from foreign_keys.csv.
 const TIERS: readonly TableDef[][] = [
   // ── Tier 0: no FK dependencies on other migrated tables ─────────────────
   [
     {
       name: 'team_members',
-      // `username` exists in the destination staging schema but not in the
-      // source old-JSR table — omit it here so the SELECT from source succeeds.
-      // The destination column will be NULL for migrated rows (nullable by design).
+      // `username` exists in destination staging schema but not in source —
+      // omitted so the SELECT from source succeeds; destination column = null.
       columns: [
         'id', 'full_name', 'monthly_salary', 'role', 'is_active', 'created_at',
         'phone', 'notes', 'national_id', 'date_of_birth', 'address',
@@ -139,6 +154,25 @@ const TIERS: readonly TableDef[][] = [
       name: 'sections',
       columns: ['id', 'project_name', 'section_name', 'section_label', 'columns', 'custom_columns', 'is_custom', 'is_deleted', 'created_at'],
       fks: [],
+      // These 10 source IDs collide with the destination's UNIQUE(project_name,
+      // section_name) constraint. The source has both soft-deleted and active
+      // versions of the same section name within the same project — duplicates
+      // the destination constraint was specifically designed to prevent going
+      // forward. All 10 are excluded here; the 2 with dependent rows
+      // (55f63cb0 → 467 rows, b393a48e → 4 rows) are handled via the
+      // `columnRemaps` on the `rows` table below.
+      skipIds: new Set([
+        'adf1a0fe-935b-4024-99f6-06ff138777ac', // zain/tdd       active dup  0 rows
+        '332fad28-cefd-4f40-9e74-65a226fce728', // nokia/ftk      active dup  0 rows
+        '444023fd-c674-42c3-b02f-90661627c903', // huawei/tdd     active dup  0 rows
+        'c3fba5bb-43ac-4d40-a59a-9274069b2238', // nokia/tdd      soft-del    0 rows
+        'eba6b3fc-fd70-4096-9976-47ccea342e94', // nokia/addsec   soft-del    0 rows
+        '55f63cb0-d58b-45c7-82c1-bb658573c912', // zain/ftk       soft-del  467 rows → remapped
+        '381b8d13-c1d6-42a6-b069-5581702769a0', // zain/addsec    soft-del    0 rows
+        'eed95201-a02e-441a-afac-999a0509242c', // huawei/ftk     soft-del    0 rows
+        'd9f05b55-9de6-41c4-8acd-81654a29d0bc', // huawei/addsec  soft-del    0 rows
+        'b393a48e-0bd4-422f-99d9-efce62ecaaa4', // ipt/tdd        active dup  4 rows → remapped
+      ]),
     },
     {
       name: 'activity_log',
@@ -160,9 +194,7 @@ const TIERS: readonly TableDef[][] = [
     },
     {
       name: 'revenue',
-      // Source has 12 columns (invoice_date, notes, added_by, status, section_name
-      // plus the 7 below). Destination staging schema only has these 7 — copy
-      // the intersection; the extra source columns are intentionally not migrated.
+      // Source has 12 columns; destination staging schema has only these 7.
       columns: ['id', 'project_name', 'site_id', 'amount', 'month', 'year', 'created_at'],
       fks: [],
     },
@@ -176,7 +208,7 @@ const TIERS: readonly TableDef[][] = [
       fks: [],
     },
   ],
-  // ── Tier 1: FK dependencies on Tier 0 (or on users, already done in Step 1)
+  // ── Tier 1: FK dependencies on Tier 0 (or users, already done in Step 1) ─
   [
     {
       name: 'employee_documents',
@@ -215,6 +247,16 @@ const TIERS: readonly TableDef[][] = [
       name: 'rows',
       columns: ['id', 'section_id', 'data', 'row_order', 'created_at', 'updated_at'],
       fks: [{ column: 'section_id', parentTable: 'sections' }],
+      // Remap section_id for rows referencing the two excluded (failed) sections.
+      // Both remaps point to the active winner for the same (project, section_name) pair.
+      //   55f63cb0 = zain/ftk (soft-deleted)  → e8ee675d = zain/ftk (active)   [467 rows]
+      //   b393a48e = ipt/tdd  (active dup)     → 3d88c00c = ipt/tdd  (active)   [  4 rows]
+      columnRemaps: {
+        section_id: new Map([
+          ['55f63cb0-d58b-45c7-82c1-bb658573c912', 'e8ee675d-3990-402a-aeb5-0ddbfc66c53a'],
+          ['b393a48e-0bd4-422f-99d9-efce62ecaaa4', '3d88c00c-9309-40c5-96d8-04af7b514c31'],
+        ]),
+      },
     },
   ],
   // ── Tier 2: FK dependencies on Tier 1 ───────────────────────────────────
@@ -236,9 +278,11 @@ const TIERS: readonly TableDef[][] = [
 interface TableResult {
   table: string;
   sourceRows: number;
-  toInsert: number;
+  excluded: number;   // explicitly skipped via skipIds
+  remapped: number;   // rows with at least one column value remapped
+  toInsert: number;   // planned for insert (after exclusion + idempotency)
   inserted: number;
-  skipped: number;
+  skipped: number;    // already present in destination
   failed: number;
   errors: string[];
 }
@@ -250,7 +294,6 @@ function extractProjectRef(url: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
-/** Pages through a table, returning every row for the given columns. */
 async function fetchAllRows<T extends Record<string, unknown>>(
   client: SupabaseClient,
   table: string,
@@ -272,23 +315,33 @@ async function fetchAllRows<T extends Record<string, unknown>>(
   return all;
 }
 
-/** Returns the set of `id` values currently in a destination table. */
 async function fetchDestIds(client: SupabaseClient, table: string): Promise<Set<string>> {
   const rows = await fetchAllRows<{ id: string }>(client, table, ['id']);
   return new Set(rows.map(r => r.id));
 }
 
-/** Returns only the specified columns from a row object. */
+/** Applies columnRemaps to a single row, returning a new object. Source unchanged. */
+function applyRemaps(
+  row: Record<string, unknown>,
+  columnRemaps: Readonly<Record<string, ReadonlyMap<string, string>>>,
+): Record<string, unknown> {
+  const out = { ...row };
+  for (const [col, remap] of Object.entries(columnRemaps)) {
+    const val = out[col];
+    if (typeof val === 'string') {
+      const mapped = remap.get(val);
+      if (mapped !== undefined) out[col] = mapped;
+    }
+  }
+  return out;
+}
+
 function pickColumns(row: Record<string, unknown>, columns: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const col of columns) out[col] = row[col] ?? null;
   return out;
 }
 
-/**
- * Validates that all expected columns exist on the given table in `client`.
- * Uses a HEAD+count query (no rows transferred). Throws on any mismatch.
- */
 async function validateSchema(
   client: SupabaseClient,
   table: string,
@@ -298,12 +351,9 @@ async function validateSchema(
   const { error } = await client
     .from(table)
     .select(columns.join(','), { head: true, count: 'exact' });
-
   if (!error) return;
-
   const msg  = error.message ?? String(error);
   const code = (error as { code?: string }).code;
-
   if (
     code === '42P01' ||
     /relation .* does not exist/i.test(msg) ||
@@ -311,33 +361,23 @@ async function validateSchema(
   ) {
     throw new Error(`SCHEMA MISMATCH [${label}]: table "${table}" not found — ${msg}`);
   }
-  // Any other error (column missing, permission, etc.) is also a schema problem.
   throw new Error(`SCHEMA MISMATCH [${label}]: table "${table}" — ${msg}`);
 }
 
-/**
- * Validates that every non-null FK value appearing in `sourceRows` exists as
- * a primary key in the parent table on `checkClient`.
- *
- * Queries only the specific IDs referenced (not a full table scan), chunked to
- * stay within PostgREST URL limits. Throws with details on any missing parent.
- */
 async function validateFKs(
   checkClient: SupabaseClient,
   table: string,
   fks: FKDef[],
-  sourceRows: Record<string, unknown>[],
+  rows: Record<string, unknown>[],
 ): Promise<void> {
   for (const fk of fks) {
     const unique = [...new Set(
-      sourceRows
+      rows
         .map(r => r[fk.column] as string | null | undefined)
         .filter((v): v is string => v != null && v !== ''),
     )];
-
     if (unique.length === 0) continue;
 
-    // Chunk to avoid URL-length limits on very large .in() lists.
     const foundIds = new Set<string>();
     for (let i = 0; i < unique.length; i += FK_CHUNK_SIZE) {
       const chunk = unique.slice(i, i + FK_CHUNK_SIZE);
@@ -345,7 +385,7 @@ async function validateFKs(
         .from(fk.parentTable)
         .select('id')
         .in('id', chunk);
-      if (error) throw new Error(`FK validation: querying ${fk.parentTable}: ${error.message}`);
+      if (error) throw new Error(`FK validation querying ${fk.parentTable}: ${error.message}`);
       for (const row of (data ?? []) as { id: string }[]) foundIds.add(row.id);
     }
 
@@ -367,9 +407,10 @@ async function migrateTable(
   dest: SupabaseClient,
   tableDef: TableDef,
 ): Promise<TableResult> {
-  const { name: table, columns, fks } = tableDef;
+  const { name: table, columns, fks, skipIds, columnRemaps } = tableDef;
   const result: TableResult = {
-    table, sourceRows: 0, toInsert: 0, inserted: 0, skipped: 0, failed: 0, errors: [],
+    table, sourceRows: 0, excluded: 0, remapped: 0,
+    toInsert: 0, inserted: 0, skipped: 0, failed: 0, errors: [],
   };
 
   // a. Read all source rows.
@@ -381,41 +422,70 @@ async function migrateTable(
     return result;
   }
 
-  // b. FK validation.
-  //    Dry run → check against source (data-quality sanity check).
-  //    Execute  → check against destination (confirms parent tier was migrated).
-  if (fks.length > 0) {
-    await validateFKs(EXECUTE ? dest : source, table, fks, sourceRows);
+  // b. Apply skipIds — remove rows that are explicitly excluded.
+  const afterSkip = skipIds
+    ? sourceRows.filter(r => !skipIds.has(r.id as string))
+    : sourceRows;
+  result.excluded = sourceRows.length - afterSkip.length;
+
+  // c. Apply columnRemaps — rewrite column values before FK check and insert.
+  //    Count how many rows have at least one value remapped (for reporting).
+  let remappedRows: Record<string, unknown>[];
+  if (columnRemaps) {
+    remappedRows = afterSkip.map(r => applyRemaps(r, columnRemaps));
+    for (let i = 0; i < afterSkip.length; i++) {
+      for (const [col, remap] of Object.entries(columnRemaps)) {
+        const v = afterSkip[i][col];
+        if (typeof v === 'string' && remap.has(v)) { result.remapped++; break; }
+      }
+    }
+  } else {
+    remappedRows = afterSkip;
   }
 
-  // c. Identify which rows already exist in destination (idempotency).
+  // d. FK validation.
+  //    Dry run  → validate ORIGINAL source values against source parent
+  //               (confirms source data is internally consistent pre-remap).
+  //    Execute  → validate REMAPPED values against destination parent
+  //               (confirms parent tier was fully migrated and remaps are valid).
+  if (fks.length > 0) {
+    await validateFKs(
+      EXECUTE ? dest : source,
+      table,
+      fks,
+      EXECUTE ? remappedRows : afterSkip,
+    );
+  }
+
+  // e. Idempotency — fetch existing destination IDs and filter.
   const destIds  = await fetchDestIds(dest, table);
-  const toInsert = sourceRows.filter(r => !destIds.has(r.id as string));
-  result.skipped  = sourceRows.length - toInsert.length;
+  const toInsert = remappedRows.filter(r => !destIds.has(r.id as string));
+  result.skipped  = remappedRows.length - toInsert.length;
   result.toInsert = toInsert.length;
 
+  const remapNote = result.remapped > 0 ? ` (${result.remapped} section_id remapped)` : '';
+  const skipNote  = result.excluded > 0  ? `, ${result.excluded} excluded (dup constraint)` : '';
   console.log(
-    `  ${table}: ${sourceRows.length} source rows | ` +
-    `${toInsert.length} to insert | ${result.skipped} already present (skip)`,
+    `  ${table}: ${result.sourceRows} source rows` +
+    `${skipNote}` +
+    ` | ${result.toInsert} to insert${remapNote}` +
+    ` | ${result.skipped} already present (skip)`,
   );
 
   if (!EXECUTE || toInsert.length === 0) return result;
 
-  // d. Insert in batches. On batch failure, fall back to one-by-one so we can
-  //    identify exactly which rows failed without aborting the whole table.
+  // f. Insert in batches. On batch failure, fall back to one-by-one.
   for (let i = 0; i < toInsert.length; i += INSERT_BATCH_SIZE) {
     const batch = toInsert
       .slice(i, i + INSERT_BATCH_SIZE)
       .map(r => pickColumns(r, columns));
 
     const { error } = await dest.from(table).insert(batch);
-
     if (!error) {
       result.inserted += batch.length;
       continue;
     }
 
-    // Batch failed — retry individually to isolate bad rows.
     console.warn(
       `  ${table}: batch [${i}–${i + batch.length - 1}] failed ` +
       `(${error.message}) — retrying individually…`,
@@ -446,14 +516,12 @@ async function main(): Promise<void> {
      'DEST_SUPABASE_URL', 'DEST_SUPABASE_SERVICE_ROLE_KEY',
      'EXPECTED_SOURCE_PROJECT_REF', 'EXPECTED_DEST_PROJECT_REF'] as const
   ).filter(k => !process.env[k]);
-
   if (missing.length) {
     console.error('ERROR: missing required env vars:', missing.join(', '));
-    console.error('Set them in .env.phase4.local — see scripts/README.md.');
     process.exit(1);
   }
 
-  // 8b. Identity guard — independent of phase4-00-preflight.ts.
+  // 8b. Identity guard.
   const sourceRef = extractProjectRef(SOURCE_SUPABASE_URL);
   const destRef   = extractProjectRef(DEST_SUPABASE_URL);
   const guardFailures: string[] = [];
@@ -461,18 +529,18 @@ async function main(): Promise<void> {
   if (sourceRef !== OLD_JSR_PROJECT_REF)
     guardFailures.push(`SOURCE ref "${sourceRef ?? '(unresolved)'}" is not the known old-JSR ref (${OLD_JSR_PROJECT_REF})`);
   if (sourceRef !== EXPECTED_SOURCE_PROJECT_REF)
-    guardFailures.push(`SOURCE ref "${sourceRef ?? '(unresolved)'}" does not match EXPECTED_SOURCE_PROJECT_REF ("${EXPECTED_SOURCE_PROJECT_REF ?? ''}")`);
+    guardFailures.push(`SOURCE ref "${sourceRef ?? '(unresolved)'}" does not match EXPECTED_SOURCE_PROJECT_REF`);
   if (destRef !== EXPECTED_DEST_PROJECT_REF)
-    guardFailures.push(`DEST ref "${destRef ?? '(unresolved)'}" does not match EXPECTED_DEST_PROJECT_REF ("${EXPECTED_DEST_PROJECT_REF ?? ''}")`);
+    guardFailures.push(`DEST ref "${destRef ?? '(unresolved)'}" does not match EXPECTED_DEST_PROJECT_REF`);
   if (destRef === OLD_JSR_PROJECT_REF)
     guardFailures.push('DEST resolves to the live old-JSR project — refusing to write to it.');
   if (destRef === TAC_PROJECT_REF)
     guardFailures.push("DEST resolves to TAC's project — refusing to write to it.");
   if (sourceRef !== null && destRef !== null && sourceRef === destRef)
-    guardFailures.push('SOURCE and DEST resolve to the same project — refusing to proceed.');
+    guardFailures.push('SOURCE and DEST resolve to the same project.');
 
   if (guardFailures.length) {
-    console.error('ERROR: identity guard failed — nothing was read or written:');
+    console.error('ERROR: identity guard failed:');
     guardFailures.forEach(f => console.error(`  - ${f}`));
     process.exit(1);
   }
@@ -487,8 +555,7 @@ async function main(): Promise<void> {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // 8c. Upfront schema validation for all 16 tables.
-  //     A single mismatch aborts the whole run — nothing is written.
+  // 8c. Upfront schema validation — any mismatch aborts before any data moves.
   console.log('Validating schemas (all 16 tables, source + destination)…');
   for (const tier of TIERS) {
     for (const tableDef of tier) {
@@ -525,8 +592,7 @@ async function main(): Promise<void> {
           console.error('Stopping immediately — no further tables will be processed.');
           process.exit(1);
         }
-        // Unexpected error (network, PostgREST, etc.) — record and continue.
-        allResults.push({ table: tableDef.name, sourceRows: 0, toInsert: 0, inserted: 0, skipped: 0, failed: 1, errors: [msg] });
+        allResults.push({ table: tableDef.name, sourceRows: 0, excluded: 0, remapped: 0, toInsert: 0, inserted: 0, skipped: 0, failed: 1, errors: [msg] });
         anyFailed = true;
       }
     }
@@ -534,46 +600,54 @@ async function main(): Promise<void> {
   }
 
   // 8e. Summary table.
-  const COL = { table: 24, src: 7, plan: 10, ins: 10, skip: 8, fail: 7 };
-  const sep = `  ${'-'.repeat(COL.table)} ${'-'.repeat(COL.src)} ${'-'.repeat(COL.plan)} ${'-'.repeat(COL.ins)} ${'-'.repeat(COL.skip)} ${'-'.repeat(COL.fail)}`;
+  const C = { tbl: 24, src: 7, excl: 8, remap: 7, plan: 10, ins: 10, skip: 8, fail: 7 };
+  const sep = `  ${'-'.repeat(C.tbl)} ${'-'.repeat(C.src)} ${'-'.repeat(C.excl)} ${'-'.repeat(C.remap)} ${'-'.repeat(C.plan)} ${'-'.repeat(C.ins)} ${'-'.repeat(C.skip)} ${'-'.repeat(C.fail)}`;
 
-  console.log('\n── Summary ──────────────────────────────────────────────────────────');
+  console.log('\n── Summary ───────────────────────────────────────────────────────────────');
   console.log(
-    `  ${'Table'.padEnd(COL.table)} ` +
-    `${'Source'.padStart(COL.src)} ` +
-    `${'ToInsert'.padStart(COL.plan)} ` +
-    `${'Inserted'.padStart(COL.ins)} ` +
-    `${'Skipped'.padStart(COL.skip)} ` +
-    `${'Failed'.padStart(COL.fail)}`,
+    `  ${'Table'.padEnd(C.tbl)} ` +
+    `${'Source'.padStart(C.src)} ` +
+    `${'Excluded'.padStart(C.excl)} ` +
+    `${'Remapped'.padStart(C.remap)} ` +
+    `${'ToInsert'.padStart(C.plan)} ` +
+    `${'Inserted'.padStart(C.ins)} ` +
+    `${'Skipped'.padStart(C.skip)} ` +
+    `${'Failed'.padStart(C.fail)}`,
   );
   console.log(sep);
 
-  let totSrc = 0, totPlan = 0, totIns = 0, totSkip = 0, totFail = 0;
+  let totSrc = 0, totExcl = 0, totRemap = 0, totPlan = 0, totIns = 0, totSkip = 0, totFail = 0;
   for (const r of allResults) {
-    totSrc  += r.sourceRows;
-    totPlan += r.toInsert;
-    totIns  += r.inserted;
-    totSkip += r.skipped;
-    totFail += r.failed;
+    totSrc   += r.sourceRows;
+    totExcl  += r.excluded;
+    totRemap += r.remapped;
+    totPlan  += r.toInsert;
+    totIns   += r.inserted;
+    totSkip  += r.skipped;
+    totFail  += r.failed;
     console.log(
-      `  ${r.table.padEnd(COL.table)} ` +
-      `${String(r.sourceRows).padStart(COL.src)} ` +
-      `${String(r.toInsert).padStart(COL.plan)} ` +
-      `${String(r.inserted).padStart(COL.ins)} ` +
-      `${String(r.skipped).padStart(COL.skip)} ` +
-      `${String(r.failed).padStart(COL.fail)}`,
+      `  ${r.table.padEnd(C.tbl)} ` +
+      `${String(r.sourceRows).padStart(C.src)} ` +
+      `${String(r.excluded  || '').padStart(C.excl)} ` +
+      `${String(r.remapped  || '').padStart(C.remap)} ` +
+      `${String(r.toInsert).padStart(C.plan)} ` +
+      `${String(r.inserted).padStart(C.ins)} ` +
+      `${String(r.skipped).padStart(C.skip)} ` +
+      `${String(r.failed   || '').padStart(C.fail)}`,
     );
   }
   console.log(sep);
   console.log(
-    `  ${'TOTAL'.padEnd(COL.table)} ` +
-    `${String(totSrc).padStart(COL.src)} ` +
-    `${String(totPlan).padStart(COL.plan)} ` +
-    `${String(totIns).padStart(COL.ins)} ` +
-    `${String(totSkip).padStart(COL.skip)} ` +
-    `${String(totFail).padStart(COL.fail)}`,
+    `  ${'TOTAL'.padEnd(C.tbl)} ` +
+    `${String(totSrc).padStart(C.src)} ` +
+    `${String(totExcl  || '').padStart(C.excl)} ` +
+    `${String(totRemap || '').padStart(C.remap)} ` +
+    `${String(totPlan).padStart(C.plan)} ` +
+    `${String(totIns).padStart(C.ins)} ` +
+    `${String(totSkip).padStart(C.skip)} ` +
+    `${String(totFail  || '').padStart(C.fail)}`,
   );
-  console.log('─────────────────────────────────────────────────────────────────────');
+  console.log('─────────────────────────────────────────────────────────────────────────');
 
   if (!EXECUTE) {
     console.log('\nDRY RUN complete — no writes were made. Re-run with --execute to apply.');
@@ -581,8 +655,7 @@ async function main(): Promise<void> {
   }
 
   if (anyFailed) {
-    console.log('\nMigration completed with failures.');
-    console.log('Re-run with --execute to resume — rows already inserted will be skipped automatically.');
+    console.log('\nMigration completed with failures. Re-run with --execute to resume.');
     process.exit(1);
   }
 
