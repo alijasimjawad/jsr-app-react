@@ -168,7 +168,7 @@ export default function FinRevenue() {
     const { data: sd } = await supabase.from('sections').select('columns').eq('id', sec.id).single();
     const cols: string[] = (sd as { columns: string[] } | null)?.columns || [];
     const siteCol = cols[0] || 'Site ID';
-    const { data: rd } = await supabase.from('rows').select('data').eq('section_id', sec.id).neq('is_deleted', true);
+    const { data: rd } = await supabase.from('rows').select('data').eq('section_id', sec.id);
     const sites = [...new Set((rd || []).map((r: { data: Record<string, unknown> }) => String(r.data?.[siteCol] || '')).filter(Boolean))];
     setModalSites(sites);
   }
