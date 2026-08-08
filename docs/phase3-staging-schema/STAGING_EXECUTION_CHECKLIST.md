@@ -41,15 +41,18 @@ package since Phase 2B:
   `02_dependent_tables.sql`, plus the `rows_section_order_idx` composite-index
   fix in `05_additional_indexes.sql`).
 
-**`revenue` is still not fully live-column-confirmed** — only `id` (PK) is
-live-confirmed (primary_keys.csv). No FK, no unique constraint, no extra
-index recorded for it anywhere in the audit, and it doesn't appear in the
-original `supabase_setup.sql` at all (that file predates whatever added this
-table). Columns are still Phase 2B's inference from a partial `.select()`
-call. **Recommendation unchanged:** before running
-`01_extensions_and_core_tables.sql`, consider one more small live query
-scoped to just this table to close the gap with certainty. Not required —
-staging is disposable if the guess is wrong — but cheap insurance.
+**`revenue` is still not fully live-column-confirmed against the old JSR
+database** — only `id` (PK) is live-confirmed (primary_keys.csv), and it
+doesn't appear in the original `supabase_setup.sql` at all. However, the
+column set in `01_extensions_and_core_tables.sql` was corrected (2026-08) by
+grepping every `.select()`/`.insert()`/`.update()`/`.order()` call against
+`public.revenue` across the actual frontend (FinRevenue.tsx,
+FinInvoices.tsx, FinReport.tsx, FinDashboard.tsx) — the original 6-column
+Phase 2B guess was missing `section_name`, `invoice_date`, `status`,
+`notes`, and `added_by`, which caused the Revenue page to error on the
+already-provisioned staging project (fixed there via
+`09_patch_revenue_missing_columns.sql`). The column set is now confirmed
+against frontend usage, if not against a live old-JSR export.
 
 **4 tables have no live JSR equivalent at all** (`cars`, `field_trips`,
 `trip_participants`, `attendance`) — reverse-engineered from

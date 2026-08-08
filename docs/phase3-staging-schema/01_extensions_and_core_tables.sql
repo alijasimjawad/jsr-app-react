@@ -170,20 +170,31 @@ create table if not exists public.sections (
 );
 
 -- ── revenue ──────────────────────────────────────────────────────────────
--- NOT live-column-confirmed (see file header note). Only `id` as PK is
--- live-confirmed (primary_keys.csv); no FK, no unique constraint, no named
--- index beyond the PK is recorded for this table in the live audit. Columns
--- below are Phase 2B's inference from React's `.select('project_name,
--- site_id, amount, month, year')` call — likely a subset of the true live
--- columns, not necessarily the complete set. Recommend confirming with a
--- live column export before running this file — see checklist.
+-- Still NOT live-column-confirmed against the old JSR database (see file
+-- header note / checklist) — but the column set below is now confirmed a
+-- different way: every `.select()`/`.insert()`/`.update()`/`.order()` call
+-- against `public.revenue` across FinRevenue.tsx, FinInvoices.tsx,
+-- FinReport.tsx, and FinDashboard.tsx was grepped, and this is the full set
+-- the frontend actually reads and writes. The original 6-column guess here
+-- (id/project_name/site_id/amount/month/year/created_at) was missing
+-- section_name, invoice_date, status, notes, and added_by — the exact gap
+-- that produced an empty/erroring Revenue page on the new staging project
+-- (`column revenue.invoice_date does not exist`, surfaced as
+-- "[object Object]" due to a separate error-display bug, fixed in
+-- FinRevenue.tsx). See 09_patch_revenue_missing_columns.sql for the
+-- idempotent patch against the already-provisioned staging database.
 create table if not exists public.revenue (
   id            uuid        primary key default gen_random_uuid(),
   project_name  text,
+  section_name  text,
   site_id       text,
   amount        numeric,
+  invoice_date  date,
   month         integer,
   year          integer,
+  status        text        default 'Implemented - Pending ATP',
+  notes         text,
+  added_by      text,
   created_at    timestamptz default now()
 );
 

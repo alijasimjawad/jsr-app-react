@@ -7,6 +7,7 @@ import { ensureSectionsLoaded, getSections, invalidateSections } from '../lib/se
 import { ensureProjectsLoaded, getProjectNames, getProjectNameToKeyMap } from '../lib/projectsCache';
 import { logActivity } from '../lib/activityLog';
 import { sendPushToRoles } from '../lib/pushNotify';
+import { errorMessage } from '../lib/errorMessage';
 import {
   type StageDone, loadStageMap as loadStageMapShared, stagePct, stuckAtLabel,
   CLEARANCE_COL_NAME, FINAL_ATP_COL_NAME,
@@ -113,7 +114,7 @@ export default function FinRevenue() {
       const { data, error } = await supabase.from('revenue').select('*').order('invoice_date', { ascending: false });
       if (error) throw error;
       setRows((data as RevRow[]) || []);
-    } catch (e: unknown) { setLoadError(e instanceof Error ? e.message : String(e)); }
+    } catch (e: unknown) { setLoadError(errorMessage(e)); }
     finally { setLoading(false); }
   }
 
@@ -228,7 +229,7 @@ export default function FinRevenue() {
         });
       }
       setModalOpen(false);
-    } catch (e: unknown) { setModalErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e: unknown) { setModalErr(errorMessage(e)); }
     finally { setModalSaving(false); }
   }
 
@@ -313,7 +314,7 @@ export default function FinRevenue() {
       }
       setRows(prev => [...newRows, ...prev]);
       showToast(`Created ${inserted} new revenue entr${inserted === 1 ? 'y' : 'ies'}`);
-    } catch (e: unknown) { showToast('Sync failed: ' + (e instanceof Error ? e.message : String(e))); }
+    } catch (e: unknown) { showToast('Sync failed: ' + errorMessage(e)); }
     finally { setSyncing(false); }
   }
 
@@ -354,7 +355,7 @@ export default function FinRevenue() {
       }
       showToast(updated === 0 ? 'No sections needed fixing'
         : `Fixed section for ${updated} entr${updated === 1 ? 'y' : 'ies'}`);
-    } catch (e: unknown) { showToast('Fix sections failed: ' + (e instanceof Error ? e.message : String(e))); }
+    } catch (e: unknown) { showToast('Fix sections failed: ' + errorMessage(e)); }
     finally { setFixing(false); }
   }
 
@@ -397,7 +398,7 @@ export default function FinRevenue() {
         details: `Added missing pipeline-stage columns to ${updatedSections} section(s)`,
       });
       await loadStageMap();
-    } catch (e: unknown) { showToast('Backfill failed: ' + (e instanceof Error ? e.message : String(e))); }
+    } catch (e: unknown) { showToast('Backfill failed: ' + errorMessage(e)); }
     finally { setBackfilling(false); }
   }
 
@@ -414,7 +415,7 @@ export default function FinRevenue() {
       const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
       Object.assign(document.createElement('a'), { href: url, download: `Finance_revenue_${new Date().toISOString().slice(0,10)}.xlsx` }).click();
       URL.revokeObjectURL(url);
-    } catch (e: unknown) { showToast('Export failed: ' + (e instanceof Error ? e.message : String(e))); }
+    } catch (e: unknown) { showToast('Export failed: ' + errorMessage(e)); }
   }
 
   function currentRevenueOf(r: RevRow): number {
