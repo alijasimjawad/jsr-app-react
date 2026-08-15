@@ -9,6 +9,7 @@ import { ensureProjectsLoaded, getProjectKeyToNameMap } from '../lib/projectsCac
 import { logActivity } from '../lib/activityLog';
 import { sendPushToRoles } from '../lib/pushNotify';
 import { BRAND } from '../config/brand';
+import { findDeliveryColIdx } from '../lib/revenueStages';
 import styles from './NetworkScopes.module.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -212,6 +213,24 @@ export function findImpColIdx(headers: string[]): number {
     h => /imp.*date/i.test(h) || /^install(ation)?$/i.test(h.trim()) ||
          /install/i.test(h)   || /integrat\w*[\s._-]*date/i.test(h),
   );
+}
+
+// Returns the best available date string for a revenue placeholder, in priority order:
+//   1. Explicit implementation-date column (Imp. Date, Installation, etc.) — if non-empty
+//   2. Delivery column — if non-empty
+//   3. '' — ensureRevenuePlaceholder will produce month=null/year=null
+export function findRevDateRaw(headers: string[], cells: string[]): string {
+  const impIdx = findImpColIdx(headers);
+  if (impIdx >= 0) {
+    const v = cells[impIdx]?.trim() || '';
+    if (v) return v;
+  }
+  const delIdx = findDeliveryColIdx(headers);
+  if (delIdx >= 0) {
+    const v = cells[delIdx]?.trim() || '';
+    if (v) return v;
+  }
+  return '';
 }
 
 export function findAtpColIdx(headers: string[]): number {
@@ -542,8 +561,7 @@ export default function NetworkScopes() {
 
     // ── Revenue auto-sync ──────────────────────────────────────────────────────
     const secLabel = secMeta.section_label || (SEC_LABELS as Record<string, string>)[sec] || sec;
-    const impColIdx = findImpColIdx(columns);
-    const impDateRaw = impColIdx >= 0 ? (modal.cells[impColIdx]?.trim() || '') : '';
+    const impDateRaw = findRevDateRaw(columns, modal.cells);
     const projLabel = PROJ_NAMES[proj] || proj;
 
     if (isNew && newSiteId) {
