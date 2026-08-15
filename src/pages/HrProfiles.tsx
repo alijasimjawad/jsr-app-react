@@ -202,6 +202,7 @@ function ProfileDetail({
   const [member, setMember] = useState(initialMember);
   const [activeTab, setActiveTab] = useState<TabName>(initialTab);
   const [docs, setDocs] = useState<EmployeeDocument[] | null>(null);
+  const [docUrls, setDocUrls] = useState<Record<string, string>>({});
   const [docsLoading, setDocsLoading] = useState(false);
   const [trips, setTrips] = useState<FieldTrip[] | null>(null);
   const [tripPP, setTripPP] = useState<Record<string, TripParticipant[]>>({});
@@ -233,19 +234,28 @@ function ProfileDetail({
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }
 
-  // Lazy-load docs on Documents tab
+  // Lazy-load docs on Documents tab, then generate short-lived signed URLs
   useEffect(() => {
     if (activeTab !== 'documents' || docs !== null) return;
     setDocsLoading(true);
-    supabase.from('employee_documents')
-      .select('*')
-      .eq('member_id', member.id)
-      .order('uploaded_at', { ascending: false })
-      .then(({ data, error }) => {
-        setDocsLoading(false);
-        if (error) { showToast('Failed to load documents: ' + error.message, false); return; }
-        setDocs((data ?? []) as EmployeeDocument[]);
-      });
+    (async () => {
+      const { data, error } = await supabase.from('employee_documents')
+        .select('*')
+        .eq('member_id', member.id)
+        .order('uploaded_at', { ascending: false });
+      setDocsLoading(false);
+      if (error) { showToast('Failed to load documents: ' + error.message, false); return; }
+      const fetched = (data ?? []) as EmployeeDocument[];
+      setDocs(fetched);
+      const urlMap: Record<string, string> = {};
+      await Promise.all(fetched.map(async (doc) => {
+        const { data: signed } = await supabase.storage
+          .from('employee-private-docs')
+          .createSignedUrl(doc.file_url, 300);
+        if (signed?.signedUrl) urlMap[doc.id] = signed.signedUrl;
+      }));
+      setDocUrls(urlMap);
+    })();
   }, [activeTab]);
 
   // Lazy-load trips on Trips tab
@@ -395,7 +405,7 @@ function ProfileDetail({
     setDocUploading(true);
     showToast('Uploading…', true);
     try {
-      const { error: upErr } = await supabase.storage.from('employee-docs').upload(path, file, { upsert: false });
+      const { error: upErr } = await supabase.storage.from('employee-private-docs').upload(path, file, { upsert: false });
       if (upErr) throw upErr;
       const { error: dbErr } = await supabase.from('employee_documents').insert({
         member_id: member.id,
@@ -406,6 +416,7 @@ function ProfileDetail({
       });
       if (dbErr) throw dbErr;
       setDocs(null); // force re-fetch
+      setDocUrls({});
       showToast('Document uploaded', true);
     } catch (e: unknown) {
       showToast('Upload failed: ' + (e instanceof Error ? e.message : String(e)), false);
@@ -418,7 +429,7 @@ function ProfileDetail({
   async function handleDocDelete(doc: EmployeeDocument) {
     if (!confirm('Delete this document? This cannot be undone.')) return;
     try {
-      await supabase.storage.from('employee-docs').remove([doc.file_url]);
+      await supabase.storage.from('employee-private-docs').remove([doc.file_url]);
       const { error } = await supabase.from('employee_documents').delete().eq('id', doc.id);
       if (error) throw error;
       setDocs(prev => prev ? prev.filter(d => d.id !== doc.id) : null);
@@ -569,6 +580,7 @@ function ProfileDetail({
         {activeTab === 'documents' && (
           <DocsTab
             docs={docs}
+            docUrls={docUrls}
             loading={docsLoading}
             uploading={docUploading}
             onUpload={() => docInputRef.current?.click()}
@@ -725,9 +737,10 @@ function ProfileDetail({
 // ── Documents tab ─────────────────────────────────────────────────────────────
 
 function DocsTab({
-  docs, loading, uploading, onUpload, onDelete,
+  docs, docUrls, loading, uploading, onUpload, onDelete,
 }: {
   docs: EmployeeDocument[] | null;
+  docUrls: Record<string, string>;
   loading: boolean;
   uploading: boolean;
   onUpload: () => void;
@@ -753,7 +766,7 @@ function DocsTab({
           const dt = (d.uploaded_at ?? d.created_at)
             ? new Date((d.uploaded_at ?? d.created_at)!).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
             : '';
-          const url = supabase.storage.from('employee-docs').getPublicUrl(d.file_url).data.publicUrl;
+          const url = docUrls[d.id];
           return (
             <div key={d.id} className={styles.docItem}>
               <div className={`${styles.docIcon} ${docIconCls(d.file_name)}`}>{docIconLabel(d.file_name)}</div>
@@ -762,7 +775,9 @@ function DocsTab({
                 <div className={styles.docMeta}>{dt}{d.uploaded_by ? ` · ${d.uploaded_by}` : ''}</div>
               </div>
               <div className={styles.docActions}>
-                <a className={styles.docDl} href={url} target="_blank" rel="noreferrer" download={d.file_name}>Download</a>
+                {url
+                  ? <a className={styles.docDl} href={url} target="_blank" rel="noreferrer" download={d.file_name}>Download</a>
+                  : <span className={styles.docDl} style={{ opacity: 0.4, cursor: 'default' }}>…</span>}
                 {hasPerm('hr_profiles_delete_doc') && (
                   <button className={styles.docDel} onClick={() => onDelete(d)} title="Delete">
                     <TrashIcon />
