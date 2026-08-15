@@ -159,3 +159,5 @@ After reviewing the audit results, the delta sync writer (`phase4-07-delta-sync.
 | Date | Commit | Total Missing | Total Changed | Notes |
 |------|--------|--------------|--------------|-------|
 | — | — | — | — | Initial audit script created; not yet run |
+| 2026-08-15 | bef2de3 | 88 | 32 | First audit run; 47 extra in dest (staging data) |
+| 2026-08-15 | ac9b29f | — | — | Phase 4.7 delta sync applied (87 INSERT, 31 UPDATE); 16/16 tables verified PASS |
