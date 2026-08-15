@@ -407,6 +407,104 @@ export default function NetworkScopes() {
     });
   }
 
+  // ── Revenue auto-sync helpers ───────────────────────────────────────────────
+  //
+  // A "placeholder" is a revenue row with amount=0 and no invoice_items linked.
+  // Placeholders are safe to update or delete automatically. Rows with financial
+  // history must be preserved even when the originating site is deleted or renamed.
+
+  async function revRowIsPlaceholder(revId: string, revAmount: number): Promise<boolean> {
+    if (revAmount !== 0) return false;
+    const { count } = await supabase
+      .from('invoice_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('revenue_id', revId);
+    return (count ?? 0) === 0;
+  }
+
+  // Inserts a zero-amount revenue placeholder for (project, site_id) if none exists.
+  // projKey is the URL/DB key (e.g. 'mrc'); projName is derived internally.
+  // Returns null on success, error message on failure.
+  async function ensureRevenuePlaceholder(
+    projKey: string,
+    secLabel: string,
+    siteId: string,
+    impDateRaw: string,
+  ): Promise<string | null> {
+    const projName = PROJ_NAMES[projKey] || projKey;
+    if (!projName || !siteId) return null;
+    const { data: existing, error: checkErr } = await supabase
+      .from('revenue')
+      .select('id, is_orphaned')
+      .eq('project_name', projName)
+      .eq('site_id', siteId)
+      .maybeSingle();
+    if (checkErr) return checkErr.message;
+    if (existing) {
+      const ex = existing as { id: string; is_orphaned: boolean };
+      if (ex.is_orphaned) {
+        const { error: reactErr } = await supabase
+          .from('revenue').update({ is_orphaned: false }).eq('id', ex.id);
+        return reactErr?.message ?? null;
+      }
+      return null;
+    }
+    const parsedDate = impDateRaw ? new Date(impDateRaw) : null;
+    const validDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : null;
+    const { error: insertErr } = await supabase.from('revenue').insert({
+      project_name: projName,
+      section_name: secLabel,
+      site_id: siteId,
+      amount: 0,
+      status: 'Implemented - Pending ATP',
+      notes: null,
+      added_by: currentUser?.full_name || '',
+      invoice_date: validDate ? impDateRaw : null,
+      month: validDate ? (validDate.getMonth() + 1) : null,
+      year: validDate ? validDate.getFullYear() : null,
+    });
+    return insertErr?.message ?? null;
+  }
+
+  // Handles revenue when a site's ID is changed during edit.
+  // Untouched placeholders are updated to the new ID.
+  // Rows with financial history are preserved and a new placeholder is created.
+  async function handleRevenueOnSiteIdChange(
+    projKey: string,
+    secLabel: string,
+    oldSiteId: string,
+    newSiteId: string,
+    impDateRaw: string,
+  ): Promise<{ text: string; ok: boolean }> {
+    const projName = PROJ_NAMES[projKey] || projKey;
+    const { data: oldRev, error: fetchErr } = await supabase
+      .from('revenue')
+      .select('id, amount')
+      .eq('project_name', projName)
+      .eq('site_id', oldSiteId)
+      .maybeSingle();
+    if (fetchErr) return { text: `Changes saved — Revenue check failed: ${fetchErr.message}`, ok: false };
+    if (!oldRev) {
+      const revErr = await ensureRevenuePlaceholder(projKey, secLabel, newSiteId, impDateRaw);
+      return revErr
+        ? { text: `Changes saved — Revenue placeholder for ${newSiteId} failed: ${revErr}`, ok: false }
+        : { text: 'Changes saved', ok: true };
+    }
+    const isPlaceholder = await revRowIsPlaceholder(oldRev.id as string, Number(oldRev.amount ?? 0));
+    if (isPlaceholder) {
+      const { error: updErr } = await supabase
+        .from('revenue').update({ site_id: newSiteId }).eq('id', oldRev.id);
+      return updErr
+        ? { text: `Changes saved — Revenue site ID update failed: ${updErr.message}`, ok: false }
+        : { text: 'Changes saved', ok: true };
+    }
+    // Financial history present — preserve old, create placeholder for new ID
+    const revErr = await ensureRevenuePlaceholder(projKey, secLabel, newSiteId, impDateRaw);
+    return revErr
+      ? { text: `Changes saved — Revenue history for ${oldSiteId} preserved. Placeholder for ${newSiteId} failed: ${revErr}`, ok: false }
+      : { text: `Changes saved — Revenue history for site ${oldSiteId} preserved; new entry created for ${newSiteId}`, ok: true };
+  }
+
   async function saveModal() {
     if (!modal || !proj || !sec) return;
     setModalSaving(true);
@@ -415,11 +513,18 @@ export default function NetworkScopes() {
     const secMeta = getSections().find(s => s.project_name === proj && s.section_name === sec && !s.is_deleted);
     if (!secMeta) { showToast('Section not found.', false); setModalSaving(false); return; }
 
+    const isNew = modal.rowId === null;
+    const newSiteId = modal.cells[0]?.trim() || '';
+    // Capture old site ID from in-memory rows state before the update replaces it.
+    const oldSiteId = !isNew
+      ? (rows.find(r => r.id === modal.rowId)?.cells[0]?.trim() ?? '')
+      : '';
+
     const data: Record<string, string> = {};
     columns.forEach((col, i) => { data[col] = modal.cells[i] ?? ''; });
 
     let saveErr: { message: string } | null = null;
-    if (modal.rowId === null) {
+    if (isNew) {
       const { error } = await supabase.from('rows').insert({
         section_id: secMeta.id, data, row_order: rows.length,
       });
@@ -433,24 +538,43 @@ export default function NetworkScopes() {
 
     setModalSaving(false);
     if (saveErr) { showToast('Save failed: ' + saveErr.message, false); return; }
-    const isNew = modal.rowId === null;
     setModal(null);
-    showToast(isNew ? 'Site added' : 'Changes saved', true);
-    const siteId = modal.cells[0] || '(empty)';
-    const projLabel = proj ? (PROJ_NAMES[proj] || proj) : '';
+
+    // ── Revenue auto-sync ──────────────────────────────────────────────────────
+    const secLabel = secMeta.section_label || (SEC_LABELS as Record<string, string>)[sec] || sec;
+    const impColIdx = findImpColIdx(columns);
+    const impDateRaw = impColIdx >= 0 ? (modal.cells[impColIdx]?.trim() || '') : '';
+    const projLabel = PROJ_NAMES[proj] || proj;
+
+    if (isNew && newSiteId) {
+      // ADD: create placeholder (no cutoff date restriction — any date or null is fine)
+      const revErr = await ensureRevenuePlaceholder(proj, secLabel, newSiteId, impDateRaw);
+      showToast(
+        revErr ? `Site added — Revenue sync failed: ${revErr}` : 'Site added',
+        !revErr,
+      );
+    } else if (!isNew && oldSiteId && newSiteId && oldSiteId !== newSiteId) {
+      // EDIT with site ID change — update placeholder or preserve financial history
+      const revResult = await handleRevenueOnSiteIdChange(proj, secLabel, oldSiteId, newSiteId, impDateRaw);
+      showToast(revResult.text, revResult.ok);
+    } else {
+      showToast(isNew ? 'Site added' : 'Changes saved', true);
+    }
+
     if (isNew) {
-      void sendPushToRoles(['admin'], 'New Site Added', `Site added to ${projLabel} — ${secMeta.section_label || sec}`);
+      void sendPushToRoles(['admin'], 'New Site Added', `Site added to ${projLabel} — ${secLabel}`);
       void sendPushToRoles(['engineer'], 'New Site Added', `Site added to ${projLabel}`);
     } else {
       void sendPushToRoles(['admin'], 'Site Updated', `Site updated in ${projLabel}`);
       void sendPushToRoles(['engineer'], 'Site Updated', `Site updated in ${projLabel}`);
     }
+    const siteIdForLog = newSiteId || '(empty)';
     logActivity({
       userFullName: currentUser?.full_name ?? currentUser?.username,
       action: isNew ? 'Added Row' : 'Edited Row',
-      projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
-      sectionName: secMeta.section_label || sec,
-      details: isNew ? `Site ID: ${siteId} | Project: ${proj ? (PROJ_NAMES[proj] || proj) : ''}` : `Site ID: ${siteId}`,
+      projectName: projLabel || null,
+      sectionName: secLabel,
+      details: isNew ? `Site ID: ${siteIdForLog} | Project: ${projLabel}` : `Site ID: ${siteIdForLog}`,
     });
     await loadSection();
   }
@@ -458,20 +582,48 @@ export default function NetworkScopes() {
   async function confirmDelete() {
     if (!modal?.rowId) return;
     setModalSaving(true);
-    const delSiteId = modal.cells[0] || '(empty)';
+    const delSiteId = modal.cells[0]?.trim() || '';
+    const projName = proj ? (PROJ_NAMES[proj] || proj) : '';
     const { error } = await supabase.from('rows').delete().eq('id', modal.rowId);
     setModalSaving(false);
     if (error) { showToast('Delete failed: ' + error.message, false); return; }
     setDeleteConfirm(false);
     setModal(null);
-    showToast('Site deleted', true);
-    void sendPushToRoles(['admin'], 'Site Deleted', `Site removed from ${proj ? (PROJ_NAMES[proj] || proj) : ''}`);
+
+    // ── Revenue cleanup on site delete ─────────────────────────────────────────
+    let toastMsg = 'Site deleted';
+    let toastOk = true;
+    if (delSiteId && projName) {
+      const { data: revRow, error: revFetchErr } = await supabase
+        .from('revenue')
+        .select('id, amount')
+        .eq('project_name', projName)
+        .eq('site_id', delSiteId)
+        .maybeSingle();
+      if (!revFetchErr && revRow) {
+        const isPlaceholder = await revRowIsPlaceholder(revRow.id as string, Number(revRow.amount ?? 0));
+        if (isPlaceholder) {
+          const { error: delRevErr } = await supabase.from('revenue').delete().eq('id', revRow.id);
+          if (delRevErr) {
+            toastMsg = `Site deleted — Revenue placeholder removal failed: ${delRevErr.message}`;
+            toastOk = false;
+          }
+        } else {
+          // Financial history present — preserve it, mark orphaned
+          await supabase.from('revenue').update({ is_orphaned: true }).eq('id', revRow.id);
+          toastMsg = `Site deleted — Revenue history for site ${delSiteId} has been preserved`;
+        }
+      }
+    }
+
+    showToast(toastMsg, toastOk);
+    void sendPushToRoles(['admin'], 'Site Deleted', `Site removed from ${projName || ''}`);
     logActivity({
       userFullName: currentUser?.full_name ?? currentUser?.username,
       action: 'Deleted Row',
-      projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
+      projectName: projName || null,
       sectionName: sec,
-      details: `Site ID: ${delSiteId} deleted from ${proj ? (PROJ_NAMES[proj] || proj) : ''}`,
+      details: `Site ID: ${delSiteId || '(empty)'} deleted from ${projName || ''}`,
     });
     await loadSection();
   }
