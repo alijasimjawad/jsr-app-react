@@ -237,7 +237,7 @@ function stripCarTripNote(text: string): string {
   return text.replace(CAR_TRIP_NOTE_RE, '').trim();
 }
 
-async function ftCreateTrip(daId: string, v: FormVals, createdBy: string) {
+async function ftCreateTrip(daId: string, v: FormVals, createdById: string | null): Promise<void> {
   const tripPayload = {
     daily_activity_id: daId,
     date: v.date,
@@ -248,10 +248,11 @@ async function ftCreateTrip(daId: string, v: FormVals, createdBy: string) {
     team_member_ids: v.team_member_ids,
     team_member_names: v.team_member_names,
     status: 'pending',
-    created_by: createdBy,
+    created_by: createdById,
   };
   const { data: trip, error } = await supabase.from('field_trips').insert(tripPayload).select().single();
-  if (error || !trip) return;
+  if (error) { console.error('[ftCreateTrip] insert failed', error); return; }
+  if (!trip) return;
   if (v.team_member_ids.length) {
     const participants = v.team_member_ids.map((mid, i) => ({
       trip_id: trip.id,
@@ -325,10 +326,10 @@ async function ftSyncCarClaim(daId: string, v: FormVals, submittedBy: string, ca
   }
 }
 
-async function ftSyncTrip(daId: string, v: FormVals, createdBy: string) {
+async function ftSyncTrip(daId: string, v: FormVals, createdById: string | null): Promise<void> {
   const { data: existing } = await supabase
     .from('field_trips').select('id,status').eq('daily_activity_id', daId).single();
-  if (!existing) { await ftCreateTrip(daId, v, createdBy); return; }
+  if (!existing) { await ftCreateTrip(daId, v, createdById); return; }
   await supabase.from('field_trips').update({
     date: v.date, project: v.project, site_id: v.site_id,
     governate: v.governate, notes: v.notes,
@@ -471,6 +472,9 @@ export default function DailyActivities() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formTouched, setFormTouched] = useState(false);
   const suppressDirty = useRef(true);
+  // Suppresses the project-change useEffect during startEdit so it does not
+  // wipe site tags / governate / car-trip state that startEdit just restored.
+  const skipProjectEffectRef = useRef(false);
 
   // History table: search / filters / sort / pagination — initial values read from the URL
   // so filters survive a refresh or can be shared as a link.
@@ -640,6 +644,7 @@ export default function DailyActivities() {
 
   // ── Sections load on project change ──
   useEffect(() => {
+    if (skipProjectEffectRef.current) { skipProjectEffectRef.current = false; return; }
     setSectionId('');
     setSectionLabel('');
     setSiteOptions([]);
@@ -1075,6 +1080,10 @@ export default function DailyActivities() {
     };
 
     const byUser = currentUser?.full_name || currentUser?.username || '';
+    // field_trips.created_by FK → team_members(id). Resolve by full_name match
+    // against the already-loaded teamMembers state (no extra DB call needed).
+    // If the logged-in user has no team_members entry, null is safe (nullable col).
+    const byTeamMemberId = teamMembers.find(m => m.full_name === byUser)?.id ?? null;
     setSaving(true);
 
     if (editingId) {
@@ -1087,7 +1096,7 @@ export default function DailyActivities() {
       const { error } = await supabase.from('daily_activities').update(payload).eq('id', editingId);
       if (error) { showToast(error.message, false); setSaving(false); return; }
       showToast(t('da_activityUpdated'), true);
-      ftSyncTrip(editingId, v, byUser).catch(() => {});
+      ftSyncTrip(editingId, v, byTeamMemberId).catch(err => { console.error('[ftSyncTrip] threw', err); });
       if (v.car_id) {
         ftSyncCarClaim(editingId, v, byUser, carName, driverName)
           .then(ok => { if (!ok) showToast(t('da_carClaimSyncFailed'), false); })
@@ -1101,7 +1110,7 @@ export default function DailyActivities() {
       if (error) { showToast(error.message, false); setSaving(false); return; }
       showToast(t('da_activitySaved'), true);
       if (inserted?.id) {
-        ftCreateTrip(inserted.id, v, byUser).catch(() => {});
+        ftCreateTrip(inserted.id, v, byTeamMemberId).catch(err => { console.error('[ftCreateTrip] threw', err); });
         if (v.car_id) {
           ftSyncCarClaim(inserted.id, v, byUser, carName, driverName)
             .then(ok => { if (!ok) showToast(t('da_carClaimSyncFailed'), false); })
@@ -1146,6 +1155,7 @@ export default function DailyActivities() {
   // ── Edit ──
   function startEdit(a: DailyActivity) {
     suppressDirty.current = true;
+    skipProjectEffectRef.current = true;
     setFormTouched(false);
     setFieldErrors({});
     setEditingId(a.id);
@@ -1956,6 +1966,11 @@ export default function DailyActivities() {
 
               {carTripEnabled && (
                 <div className={styles.subCardBody}>
+                  {cars.length === 0 && (
+                    <p style={{ color: 'var(--color-warn, #b45309)', marginBottom: 8, fontSize: 13 }}>
+                      No cars registered. Add a car in Finance → Cars first.
+                    </p>
+                  )}
                   <div className={styles.fieldsGrid}>
                     <div className={styles.field}>
                       <label>{t('da_tripCar')} <span className={styles.req}>*</span></label>
@@ -2014,6 +2029,11 @@ export default function DailyActivities() {
                       )}
 
                       {fieldErrors.carId && <span className={styles.fieldErrMsg}>{fieldErrors.carId}</span>}
+                      {carId && !getCarOwnerId(carId) && !driverId && (
+                        <span style={{ color: 'var(--color-warn, #b45309)', fontSize: 12, marginTop: 2, display: 'block' }}>
+                          No default driver for this car — select one below.
+                        </span>
+                      )}
                     </div>
                     <div className={styles.field}>
                       <label>{t('da_tripDriver')} <span className={styles.req}>*</span></label>

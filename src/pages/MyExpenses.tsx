@@ -349,7 +349,11 @@ export default function MyExpenses() {
       error = res.error;
     }
     setSaving(false);
-    if (error) { setFormErr('Unable to submit the expense claim. Please check the required fields and try again.'); return; }
+    if (error) {
+      console.error('[MyExpenses] saveClaim error:', error.message, error);
+      setFormErr(`Unable to submit the expense claim: ${error.message}`);
+      return;
+    }
     setFormOpen(false);
     showToast(editId ? 'Claim resubmitted successfully.' : 'Expense claim submitted successfully.', true);
     loadClaims();
