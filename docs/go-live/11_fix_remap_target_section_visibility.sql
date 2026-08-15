@@ -1,24 +1,25 @@
 -- docs/go-live/11_fix_remap_target_section_visibility.sql
 --
--- Purpose: Restore visibility of the zain/ftk section (e8ee675d) in JSR React
--- staging. This section is the FK target for 467 `rows` that were remapped from
--- the source section 55f63cb0 (zain/ftk soft-deleted dup) during Phase 4 migration.
--- It was accidentally soft-deleted during staging cleanup, making those 467 rows
--- invisible in Network Scopes.
+-- !! SUPERSEDED — DO NOT APPLY !!
 --
--- Background:
---   Phase 4 migration (phase4-02) remapped rows whose section_id was
---   55f63cb0 (zain/ftk, soft-deleted dup) to e8ee675d (zain/ftk, active).
---   After migration, the staging database was cleaned up and e8ee675d was
---   accidentally marked is_deleted=true. This hides all 467 remapped rows
---   from Network Scopes queries that filter out deleted sections.
+-- This patch was written to restore zain/ftk (e8ee675d) to is_deleted=false.
+-- It is no longer needed and must NOT be applied.
+--
+-- Reason:
+--   The zain/ftk section (e8ee675d) was intentionally retired by the business
+--   owner (Ali Jasim) on 2026-08-15 during Module A QA. This is a deliberate
+--   business decision, not an accidental deletion. The section's 467 linked rows
+--   are preserved in the database for historical/reference purposes.
+--
+-- Final state (correct, do not change):
+--   sections.id          = e8ee675d-3990-402a-aeb5-0ddbfc66c53a
+--   sections.is_deleted  = true   ← intentional, permanent
+--   rows linked to it    = 467    ← preserved, NOT hard-deleted
 --
 -- Scope:
---   DESTINATION ONLY: JSR React staging — qaqxoakjnyivuegsopha
+--   This file is retained for audit trail only.
 --   NEVER apply to source (old JSR production): tltbkjvrhqsxdspdfeqk
---
--- Apply via the Supabase SQL editor on the JSR React staging project.
--- This patch is idempotent — safe to re-run.
+--   NEVER apply to JSR React staging: qaqxoakjnyivuegsopha
 
 -- ── Step 1: Read-only check — confirm current state before patching ────────────
 SELECT
