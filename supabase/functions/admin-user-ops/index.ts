@@ -159,18 +159,22 @@ Deno.serve(async (req: Request) => {
         .single();
       if (lookupErr || !userRow) return err('User not found');
 
+      // Delete auth account FIRST so that if it fails we leave the profile intact
+      // (orphaned auth account is worse than a dangling profile — auth account
+      // can still be used to log in).
+      if (userRow.auth_user_id) {
+        const { error: authDelErr } = await admin.auth.admin.deleteUser(userRow.auth_user_id);
+        if (authDelErr) return err('Auth account deletion failed. Profile not deleted.');
+      }
+
       const { error: deleteErr } = await admin
         .from('users')
         .delete()
         .eq('id', userId);
-      if (deleteErr) return err(`Profile deletion failed: ${deleteErr.message}`);
-
-      if (userRow.auth_user_id) {
-        const { error: authDelErr } = await admin.auth.admin.deleteUser(userRow.auth_user_id);
-        if (authDelErr) {
-          // public.users is gone; log but don't block the response
-          console.error(`Auth delete failed for ${userRow.auth_user_id}: ${authDelErr.message}`);
-        }
+      if (deleteErr) {
+        // Auth account is already gone; log the orphan for manual cleanup.
+        console.error(`Profile deletion failed after auth delete for userId ${userId}`);
+        return err('Profile deletion failed after auth account was removed. Contact an admin.');
       }
 
       return ok({ success: true });
@@ -180,6 +184,6 @@ Deno.serve(async (req: Request) => {
 
   } catch (e) {
     console.error('admin-user-ops unhandled:', e);
-    return err(`Internal error: ${(e as Error).message}`, 500);
+    return err('An unexpected error occurred. Check function logs for details.', 500);
   }
 });
