@@ -181,7 +181,7 @@ export default function FinInvoices() {
   // ── Invoice modal ─────────────────────────────────────────
   const [invModal,     setInvModal]     = useState(false);
   const [invEditId,    setInvEditId]    = useState<string | null>(null);
-  const [invForm,      setInvForm]      = useState({ clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '' });
+  const [invForm,      setInvForm]      = useState({ clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '' });
   const [revSites,     setRevSites]     = useState<RevRow[]>([]);
   const [pickerIds,    setPickerIds]    = useState<Set<string>>(new Set()); // invoiced IDs to exclude in picker
   const [checkedRevs,  setCheckedRevs]  = useState<Set<string>>(new Set()); // currently-checked revenue IDs
@@ -368,7 +368,6 @@ export default function FinInvoices() {
         issueDate: inv?.issue_date      || today,
         dueDate:   inv?.due_date        || '',
         notes:     inv?.notes           || '',
-        received:  String(inv?.amount_received ?? 0),
       });
       // Load existing line items
       const { data: existingItems } = await supabase.from('invoice_items').select('*').eq('invoice_id', id);
@@ -386,7 +385,7 @@ export default function FinInvoices() {
       const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
       setInvForm({
         clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
-        project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '',
+        project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
       });
     }
     setInvModal(true);
@@ -403,7 +402,7 @@ export default function FinInvoices() {
     setPickerStatus('Select a project first');
     const year  = new Date().getFullYear();
     const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
-    setInvForm({ clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`, project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '' });
+    setInvForm({ clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`, project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '' });
     setInvModal(true);
     await loadPickerForProject(projectName, null, true);
   }
@@ -415,36 +414,23 @@ export default function FinInvoices() {
     if (!invForm.number)    { setInvErr('Invoice number is required.'); return; }
     if (!invForm.issueDate) { setInvErr('Issue date is required.'); return; }
     const total = invTotal;
-
-    let received = 0;
-    if (invEditId) {
-      received = invForm.received !== '' ? +invForm.received : 0;
-      if (received < 0) { setInvErr('Received amount cannot be negative.'); return; }
-      if (total > 0 && received > total) { setInvErr(`Received amount cannot exceed the invoice total (${total.toLocaleString()} IQD).`); return; }
-    }
-
-    const derivedStatus = invEditId && total > 0
-      ? (received >= total ? 'Paid' : received > 0 ? 'Partial' : invForm.status || 'Draft')
-      : invForm.status || 'Draft';
-
-    const basePayload = {
+    const payload = {
       client_id:      invForm.clientId,
       invoice_number: invForm.number.trim(),
       project_name:   invForm.project || null,
       issue_date:     invForm.issueDate,
       due_date:       invForm.dueDate || null,
-      status:         derivedStatus,
+      status:         invForm.status || 'Draft',
       total_amount:   total,
       notes:          invForm.notes.trim() || null,
       created_by:     currentUser?.full_name || '',
     };
-    const payload = invEditId ? { ...basePayload, amount_received: received } : basePayload;
     try {
       let invoiceId = invEditId;
       if (invEditId) {
         const { error } = await supabase.from('invoices').update(payload).eq('id', invEditId);
         if (error) throw error;
-        setInvoices(list => list.map(i => i.id === invEditId ? { ...i, ...basePayload, amount_received: received } : i));
+        setInvoices(list => list.map(i => i.id === invEditId ? { ...i, ...payload } : i));
         await supabase.from('invoice_items').delete().eq('invoice_id', invEditId);
       } else {
         const { data, error } = await supabase.from('invoices').insert(payload).select('*').single();
@@ -486,7 +472,7 @@ export default function FinInvoices() {
   async function deleteInvoice(id: string) {
     const hasPayments = payments.some(p => p.invoice_id === id);
     if (hasPayments) {
-      showToast('Cannot delete: this invoice has recorded payments. Void the invoice instead.', false);
+      showToast('Cannot delete: this invoice has recorded payments. Remove or correct the payments first, or void the invoice.', false);
       return;
     }
     const inv = invoices.find(i => i.id === id);
@@ -515,10 +501,38 @@ export default function FinInvoices() {
     setPayModal(true);
   }
 
+  // ── Source-of-truth: recalculate invoice financial state from ledger ──────────
+  async function recalcInvoice(invoiceId: string, updatedPayments: Payment[]) {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv) return;
+    const total    = +inv.total_amount || 0;
+    const received = updatedPayments
+      .filter(p => p.invoice_id === invoiceId)
+      .reduce((s, p) => s + (+p.amount || 0), 0);
+    const newStatus = received >= total && total > 0
+      ? 'Paid'
+      : received > 0
+        ? 'Partial'
+        : (inv.status === 'Paid' || inv.status === 'Partial') ? 'Draft' : inv.status;
+    await supabase.from('invoices').update({ amount_received: received, status: newStatus }).eq('id', invoiceId);
+    setInvoices(list => list.map(i => i.id === invoiceId ? { ...i, amount_received: received, status: newStatus } : i));
+  }
+
   async function savePayment() {
     setPayErr('');
-    if (!payForm.date)                             { setPayErr('Payment date is required.'); return; }
-    if (!+payForm.amount || +payForm.amount <= 0)  { setPayErr('Valid amount is required.'); return; }
+    if (!payForm.date)                            { setPayErr('Payment date is required.'); return; }
+    if (!+payForm.amount || +payForm.amount <= 0) { setPayErr('Amount must be greater than 0.'); return; }
+    const inv = invoices.find(x => x.id === payInvId);
+    if (!inv || !payInvId) { setPayErr('Invoice not found.'); return; }
+    const existingReceived = payments
+      .filter(p => p.invoice_id === payInvId)
+      .reduce((s, p) => s + (+p.amount || 0), 0);
+    const total = +inv.total_amount || 0;
+    if (total > 0 && existingReceived + +payForm.amount > total) {
+      const maxAdd = total - existingReceived;
+      setPayErr(`Payment would exceed invoice total. Maximum additional payment: ${maxAdd.toLocaleString()} IQD.`);
+      return;
+    }
     const payload = {
       invoice_id:   payInvId,
       payment_date: payForm.date,
@@ -527,17 +541,24 @@ export default function FinInvoices() {
       notes:        payForm.notes.trim()     || null,
       recorded_by:  currentUser?.full_name   || '',
     };
-    const { error } = await supabase.from('invoice_payments').insert(payload);
+    const { data: newPay, error } = await supabase.from('invoice_payments').insert(payload).select('*').single();
     if (error) { setPayErr(error.message); return; }
-    const inv = invoices.find(x => x.id === payInvId);
-    if (inv && payInvId) {
-      const newReceived = (+inv.amount_received || 0) + +payForm.amount;
-      const newStatus   = newReceived >= (+inv.total_amount || 0) ? 'Paid' : 'Partial';
-      await supabase.from('invoices').update({ amount_received: newReceived, status: newStatus }).eq('id', payInvId);
-      setInvoices(list => list.map(i => i.id === payInvId ? { ...i, amount_received: newReceived, status: newStatus } : i));
-    }
+    const updatedPayments = [...payments, newPay as Payment];
+    setPayments(updatedPayments);
+    await recalcInvoice(payInvId, updatedPayments);
     setPayModal(false);
     showToast('Payment recorded!', true);
+  }
+
+  async function deletePayment(paymentId: string, invoiceId: string) {
+    if (!window.confirm('Delete this payment record? This cannot be undone.')) return;
+    const { error } = await supabase.from('invoice_payments').delete().eq('id', paymentId);
+    if (error) { showToast(error.message, false); return; }
+    const updatedPayments = payments.filter(p => p.id !== paymentId);
+    setPayments(updatedPayments);
+    setDetailPayments(dp => dp.filter(p => p.id !== paymentId));
+    await recalcInvoice(invoiceId, updatedPayments);
+    showToast('Payment deleted.', true);
   }
 
   // ── Detail modal ──────────────────────────────────────────
@@ -814,10 +835,11 @@ export default function FinInvoices() {
               </div>
               {invEditId && (
                 <div className={css.formField}>
-                  <label>Amount Received (IQD)</label>
-                  <input type="number" className={css.formInput} min={0} placeholder="0"
-                    value={invForm.received}
-                    onChange={e => setInvForm(f => ({ ...f, received: e.target.value }))} />
+                  <label>Received to Date</label>
+                  <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, fontSize: 14, fontWeight: 700, color: '#16a34a' }}>
+                    {iqd(payments.filter(p => p.invoice_id === invEditId).reduce((s, p) => s + (+p.amount || 0), 0))}
+                    <span style={{ fontSize: 11, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>from payment ledger — read only</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -1010,7 +1032,7 @@ export default function FinInvoices() {
                 : detailPayments.length === 0
                   ? <div className={css.detailEmpty}>No payments recorded yet.</div>
                   : <table className={css.table} style={{ fontSize: 12 }}>
-                      <thead><tr><th>Date</th><th>Amount</th><th>Reference</th><th>Recorded By</th><th>Notes</th></tr></thead>
+                      <thead><tr><th>Date</th><th>Amount</th><th>Reference</th><th>Recorded By</th><th>Notes</th>{hasPerm('fin_invoices_record_payment') && <th></th>}</tr></thead>
                       <tbody>
                         {detailPayments.map(p => (
                           <tr key={p.id}>
@@ -1019,6 +1041,14 @@ export default function FinInvoices() {
                             <td style={{ color: '#64748b' }}>{p.reference || '—'}</td>
                             <td style={{ color: '#64748b' }}>{p.recorded_by || '—'}</td>
                             <td style={{ color: '#64748b' }}>{p.notes || '—'}</td>
+                            {hasPerm('fin_invoices_record_payment') && (
+                              <td>
+                                <button onClick={() => deletePayment(p.id, detailId!)} title="Delete payment"
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 14, padding: '2px 6px', lineHeight: 1 }}>
+                                  🗑
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
