@@ -57,3 +57,7 @@ _stale_node_modules_*
 # describes live production scale and current security posture, so by
 # decision it stays local-only rather than in git history.
 docs/schema-audit-results/
+
+# Phase 4.5 delta sync audit output — contains business row IDs; regenerated
+# on each run; not part of the source tree.
+scripts/delta-sync-report.json
