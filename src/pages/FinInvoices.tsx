@@ -181,7 +181,7 @@ export default function FinInvoices() {
   // ── Invoice modal ─────────────────────────────────────────
   const [invModal,     setInvModal]     = useState(false);
   const [invEditId,    setInvEditId]    = useState<string | null>(null);
-  const [invForm,      setInvForm]      = useState({ clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '' });
+  const [invForm,      setInvForm]      = useState({ clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '' });
   const [revSites,     setRevSites]     = useState<RevRow[]>([]);
   const [pickerIds,    setPickerIds]    = useState<Set<string>>(new Set()); // invoiced IDs to exclude in picker
   const [checkedRevs,  setCheckedRevs]  = useState<Set<string>>(new Set()); // currently-checked revenue IDs
@@ -368,6 +368,7 @@ export default function FinInvoices() {
         issueDate: inv?.issue_date      || today,
         dueDate:   inv?.due_date        || '',
         notes:     inv?.notes           || '',
+        received:  String(inv?.amount_received ?? 0),
       });
       // Load existing line items
       const { data: existingItems } = await supabase.from('invoice_items').select('*').eq('invoice_id', id);
@@ -385,7 +386,7 @@ export default function FinInvoices() {
       const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
       setInvForm({
         clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
-        project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
+        project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '',
       });
     }
     setInvModal(true);
@@ -402,7 +403,7 @@ export default function FinInvoices() {
     setPickerStatus('Select a project first');
     const year  = new Date().getFullYear();
     const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
-    setInvForm({ clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`, project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '' });
+    setInvForm({ clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`, project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '', received: '' });
     setInvModal(true);
     await loadPickerForProject(projectName, null, true);
   }
@@ -414,23 +415,36 @@ export default function FinInvoices() {
     if (!invForm.number)    { setInvErr('Invoice number is required.'); return; }
     if (!invForm.issueDate) { setInvErr('Issue date is required.'); return; }
     const total = invTotal;
-    const payload = {
+
+    let received = 0;
+    if (invEditId) {
+      received = invForm.received !== '' ? +invForm.received : 0;
+      if (received < 0) { setInvErr('Received amount cannot be negative.'); return; }
+      if (total > 0 && received > total) { setInvErr(`Received amount cannot exceed the invoice total (${total.toLocaleString()} IQD).`); return; }
+    }
+
+    const derivedStatus = invEditId && total > 0
+      ? (received >= total ? 'Paid' : received > 0 ? 'Partial' : invForm.status || 'Draft')
+      : invForm.status || 'Draft';
+
+    const basePayload = {
       client_id:      invForm.clientId,
       invoice_number: invForm.number.trim(),
       project_name:   invForm.project || null,
       issue_date:     invForm.issueDate,
       due_date:       invForm.dueDate || null,
-      status:         invForm.status || 'Draft',
+      status:         derivedStatus,
       total_amount:   total,
       notes:          invForm.notes.trim() || null,
       created_by:     currentUser?.full_name || '',
     };
+    const payload = invEditId ? { ...basePayload, amount_received: received } : basePayload;
     try {
       let invoiceId = invEditId;
       if (invEditId) {
         const { error } = await supabase.from('invoices').update(payload).eq('id', invEditId);
         if (error) throw error;
-        setInvoices(list => list.map(i => i.id === invEditId ? { ...i, ...payload } : i));
+        setInvoices(list => list.map(i => i.id === invEditId ? { ...i, ...basePayload, amount_received: received } : i));
         await supabase.from('invoice_items').delete().eq('invoice_id', invEditId);
       } else {
         const { data, error } = await supabase.from('invoices').insert(payload).select('*').single();
@@ -470,10 +484,25 @@ export default function FinInvoices() {
   }
 
   async function deleteInvoice(id: string) {
-    if (!window.confirm('Delete this invoice? This cannot be undone.')) return;
+    const hasPayments = payments.some(p => p.invoice_id === id);
+    if (hasPayments) {
+      showToast('Cannot delete: this invoice has recorded payments. Void the invoice instead.', false);
+      return;
+    }
+    const inv = invoices.find(i => i.id === id);
+    if (!window.confirm(`Delete invoice ${inv?.invoice_number || 'this invoice'}? This cannot be undone.`)) return;
+    const { error: itemErr } = await supabase.from('invoice_items').delete().eq('invoice_id', id);
+    if (itemErr) { showToast(itemErr.message, false); return; }
     const { error } = await supabase.from('invoices').delete().eq('id', id);
     if (error) { showToast(error.message, false); return; }
+    const deletedItems = items.filter(i => i.invoice_id === id);
     setInvoices(list => list.filter(i => i.id !== id));
+    setItems(list => list.filter(i => i.invoice_id !== id));
+    setInvoicedIds(prev => {
+      const next = new Set(prev);
+      deletedItems.forEach(i => { if (i.revenue_id) next.delete(i.revenue_id); });
+      return next;
+    });
     showToast('Invoice deleted.', true);
   }
 
@@ -783,6 +812,14 @@ export default function FinInvoices() {
                 <textarea className={css.formTextarea} rows={2} placeholder="Optional…"
                   value={invForm.notes} onChange={e => setInvForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
+              {invEditId && (
+                <div className={css.formField}>
+                  <label>Amount Received (IQD)</label>
+                  <input type="number" className={css.formInput} min={0} placeholder="0"
+                    value={invForm.received}
+                    onChange={e => setInvForm(f => ({ ...f, received: e.target.value }))} />
+                </div>
+              )}
             </div>
 
             {/* Revenue Picker */}
