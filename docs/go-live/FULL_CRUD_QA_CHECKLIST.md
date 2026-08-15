@@ -52,7 +52,7 @@ Work through each section in the order listed under [Recommended Execution Order
 | 2.7 | Network Scopes | Edit a row's cell value | Change persists on reload; `rows.data` JSONB updated | `rows` | U | **CRITICAL** | | |
 | 2.8 | Network Scopes | Delete a row | Row removed; `rows` count decreases | `rows` | D | **CRITICAL** | | |
 | 2.9 | Network Scopes | Reorder rows (drag or reorder action) | New order persists; `row_order` values updated | `rows` | U | IMPORTANT | | |
-| 2.10 | Network Scopes | Import rows via Excel/CSV upload | Rows inserted for correct section | `rows` | I | IMPORTANT | | |
+| 2.10 | Network Scopes | Import rows via Excel/CSV upload | Rows inserted for correct section; schema unchanged | `rows` | I | IMPORTANT | **PASS** | Fixed 2026-08-15: title-row detection in `handleImportFile` (skips JSR brand title row); schema protection in `doImportWith` (headers must match section columns exactly, no `sections.columns` update); safe INSERT-first-then-DELETE pattern (no data loss on partial failure); always-show preview dialog. 23/23 unit parse tests pass, 40/40 round-trip QA tests pass. QA section `3813b019` restored. |
 | 2.11 | Network Scopes | Export section to Excel | XLSX downloaded; contains correct column headers and all rows | `rows` | R | IMPORTANT | | |
 
 ---

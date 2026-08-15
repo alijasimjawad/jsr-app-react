@@ -77,6 +77,96 @@ function formatImportCell(v: unknown): string {
   return String(v);
 }
 
+// ── Site ID normalisation ─────────────────────────────────────────────────────
+
+// Strips formatting artefacts introduced by Excel's display number format
+// (thousands commas) and the specific "trailing period on integers" pattern
+// produced by some regional formats (e.g. "9,950." → "9950").
+// This is the single canonical normaliser used for both existing and incoming
+// Site ID values so that matches are format-agnostic.
+export function normalizeSiteId(raw: string): string {
+  let s = raw.trim();
+  s = s.replace(/,/g, '');                   // remove thousands commas
+  if (/^\d+\.$/.test(s)) s = s.slice(0, -1); // remove trailing period when purely numeric
+  return s;
+}
+
+// ── Upsert analysis ───────────────────────────────────────────────────────────
+
+export interface UpsertAnalysis {
+  siteIdColIdx: number;                                           // -1 if column absent
+  toInsert:   string[][];                                         // new rows (Site ID not in section)
+  toUpdate:   Array<{ rowId: string; cells: string[] }>;         // matched rows (Site ID exists)
+  conflicts:  Array<{ row: string[]; reason: string }>;          // duplicate Site IDs in file
+  skipped:    string[][];                                         // blank Site ID — excluded
+  isSafeForUpsert: boolean;
+  unsafeReason?: string;
+}
+
+// Classifies incoming rows into insert / update / conflict / skipped buckets.
+// existingRows and existingColumns come from component state — matching is
+// restricted to the SAME section (caller must pass only that section's rows).
+export function analyzeUpsertOp(
+  impHeaders:       string[],
+  impRows:          string[][],
+  existingRows:     { id: string; cells: string[] }[],
+  existingColumns:  string[],
+): UpsertAnalysis {
+  const siteIdColIdx = impHeaders.findIndex(h => /^site[\s_]?id$/i.test(h.trim()));
+
+  if (siteIdColIdx === -1) {
+    return {
+      siteIdColIdx: -1,
+      toInsert: [], toUpdate: [], conflicts: [], skipped: impRows,
+      isSafeForUpsert: false,
+      unsafeReason: '"Site ID" column not found in this section — upsert requires a Site ID column',
+    };
+  }
+
+  // Build normalized Site ID → existing row ID map (THIS section only).
+  const existingSiteIdIdx = existingColumns.findIndex(h => /^site[\s_]?id$/i.test(h.trim()));
+  const existingMap = new Map<string, string>(); // normId → rowId
+  if (existingSiteIdIdx >= 0) {
+    for (const row of existingRows) {
+      const norm = normalizeSiteId(row.cells[existingSiteIdIdx] ?? '');
+      if (norm) existingMap.set(norm, row.id);
+    }
+  }
+
+  // Count occurrences of each normalized Site ID in the incoming file.
+  const incomingCounts = new Map<string, number>();
+  for (const row of impRows) {
+    const norm = normalizeSiteId(row[siteIdColIdx] ?? '');
+    if (norm) incomingCounts.set(norm, (incomingCounts.get(norm) ?? 0) + 1);
+  }
+
+  const toInsert:  string[][] = [];
+  const toUpdate:  Array<{ rowId: string; cells: string[] }> = [];
+  const conflicts: Array<{ row: string[]; reason: string }> = [];
+  const skipped:   string[][] = [];
+
+  for (const row of impRows) {
+    const norm = normalizeSiteId(row[siteIdColIdx] ?? '');
+    if (!norm) { skipped.push(row); continue; }
+    if ((incomingCounts.get(norm) ?? 0) > 1) {
+      conflicts.push({ row, reason: `Duplicate Site ID "${norm}" in file` }); continue;
+    }
+    const existingId = existingMap.get(norm);
+    if (existingId) {
+      toUpdate.push({ rowId: existingId, cells: row });
+    } else {
+      toInsert.push(row);
+    }
+  }
+
+  const isSafeForUpsert = conflicts.length === 0;
+  const unsafeReason = conflicts.length > 0
+    ? `${conflicts.length} duplicate Site ID${conflicts.length !== 1 ? 's' : ''} found in the file — fix before importing`
+    : undefined;
+
+  return { siteIdColIdx, toInsert, toUpdate, conflicts, skipped, isSafeForUpsert, unsafeReason };
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface GridRow {
@@ -98,9 +188,10 @@ interface ModalState {
 }
 
 interface ImportPending {
-  headers: string[];
-  rows: string[][];
+  headers:  string[];
+  rows:     string[][];
   fileName: string;
+  upsert:   UpsertAnalysis;
 }
 
 // ── KPI helpers ───────────────────────────────────────────────────────────────
@@ -395,17 +486,6 @@ export default function NetworkScopes() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        // `cellDates: true` + `raw: true` pulls the actual underlying cell
-        // value (number/Date/string) instead of asking the xlsx library to
-        // render it through the source workbook's display number format.
-        // That rendering step (the old `raw: false` + `dateNF` combo) is
-        // what caused numeric ID columns to come through as e.g. "5,459."
-        // whenever the Excel column happened to carry a custom numeric
-        // display format (thousands separator, trailing decimal point with
-        // zero decimal places, etc.) — the format was being applied to
-        // every column, not just dates. formatImportCell() below re-applies
-        // yyyy-mm-dd formatting to real Date cells only, and converts plain
-        // numbers with String() so no locale/thousands formatting sneaks in.
         const wb = XLSX.read(ev.target!.result as ArrayBuffer, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, {
@@ -413,22 +493,68 @@ export default function NetworkScopes() {
         });
 
         if (!raw || raw.length < 1) { showToast('Excel file appears to be empty', false); return; }
-        const impHeaders = (raw[0] as unknown[]).map(h => formatImportCell(h).trim());
-        if (impHeaders.every(h => h === '')) { showToast('No headers found in row 1', false); return; }
 
-        const impRows: string[][] = (raw.slice(1) as unknown[][])
+        // JSR-generated exports write the brand title in row 1 (merged cell) and real
+        // column headers in row 2. Detect this pattern and skip the title row so it
+        // is never mistaken for column headers.
+        let headerRowIdx = 0;
+        const firstCell = formatImportCell((raw[0] as unknown[])[0]).trim();
+        if (firstCell.startsWith(BRAND.appName)) {
+          headerRowIdx = 1;
+        }
+        if (raw.length <= headerRowIdx) { showToast('No header row found in the file', false); return; }
+
+        const rawHeaders = (raw[headerRowIdx] as unknown[]).map(h => formatImportCell(h).trim());
+
+        // Drop trailing empty columns that appear when a merged title cell spills over.
+        const lastNonEmpty = rawHeaders.reduce((last, h, i) => h !== '' ? i : last, -1);
+        if (lastNonEmpty === -1) { showToast('No column headers found in the file', false); return; }
+        const impHeaders = rawHeaders.slice(0, lastNonEmpty + 1);
+
+        // Reject blank header names within the column set.
+        const blankIdx = impHeaders.findIndex(h => h === '');
+        if (blankIdx !== -1) {
+          showToast(`Column ${blankIdx + 1} has a blank header — import blocked`, false); return;
+        }
+
+        // Reject duplicate header names.
+        const seen = new Set<string>();
+        for (const h of impHeaders) {
+          if (seen.has(h)) { showToast(`Duplicate column "${h}" — import blocked`, false); return; }
+          seen.add(h);
+        }
+
+        // Reject suspiciously long headers (catches title-row misdetection edge cases).
+        if (impHeaders.some(h => h.length > 100)) {
+          showToast('A column header is too long — possible title-row detection failure', false); return;
+        }
+
+        // Schema protection: file headers must exactly match the section's current columns.
+        // Any mismatch is rejected here before the confirmation dialog is shown.
+        if (columns.length > 0) {
+          const match = impHeaders.length === columns.length &&
+            impHeaders.every((h, i) => h === columns[i]);
+          if (!match) {
+            showToast(
+              `Import blocked — column mismatch.\nSection expects: [${columns.join(', ')}]\nFile contains: [${impHeaders.join(', ')}]`,
+              false,
+            );
+            return;
+          }
+        }
+
+        const dataStartIdx = headerRowIdx + 1;
+        const impRows: string[][] = (raw.slice(dataStartIdx) as unknown[][])
           .filter(r => (r as unknown[]).some(v => formatImportCell(v).trim() !== ''))
           .map(r => impHeaders.map((_, i) => formatImportCell((r as unknown[])[i])));
 
         if (impRows.length === 0) { showToast('No data rows found in the file', false); return; }
 
-        const pending: ImportPending = { headers: impHeaders, rows: impRows, fileName: file.name };
+        // Analyse upsert feasibility using current section rows (same-section matching only).
+        const upsert = analyzeUpsertOp(impHeaders, impRows, rows, columns);
 
-        if (rows.length > 0) {
-          setImportPending(pending);
-        } else {
-          doImportWith(pending, 'replace');
-        }
+        // Always show the preview dialog — never write to the DB without confirmation.
+        setImportPending({ headers: impHeaders, rows: impRows, fileName: file.name, upsert });
       } catch (err) {
         showToast('Failed to read Excel file: ' + (err as Error).message, false);
       }
@@ -436,7 +562,7 @@ export default function NetworkScopes() {
     reader.readAsArrayBuffer(file);
   }
 
-  async function doImportWith(pending: ImportPending, mode: 'replace' | 'append') {
+  async function doImportWith(pending: ImportPending, mode: 'replace' | 'append' | 'upsert') {
     setImportPending(null);
     setImporting(true);
 
@@ -450,65 +576,158 @@ export default function NetworkScopes() {
       return;
     }
 
-    let finalHeaders: string[];
-    let allRowCells: string[][];
-
-    if (mode === 'replace') {
-      finalHeaders = impHeaders;
-      allRowCells = impRows;
-    } else {
-      const existingHeaders = columns;
-      const merged = [...existingHeaders];
-      impHeaders.forEach(h => { if (!merged.includes(h)) merged.push(h); });
-
-      const realigned = rows.map(r =>
-        merged.map(h => {
-          const idx = existingHeaders.indexOf(h);
-          return idx >= 0 ? (r.cells[idx] ?? '') : '';
-        }),
+    // Schema protection (defense-in-depth): re-verify headers against fresh DB data.
+    // Apply the same legacy-column filter as loadSection so the comparison is consistent
+    // with what is currently displayed in the table and exported to Excel.
+    const customColSet = new Set<string>(secMeta.custom_columns ?? []);
+    const existingCols = (secMeta.columns ?? []).filter(
+      c => !LEGACY_DEFAULT_COLS.has(c) || customColSet.has(c),
+    );
+    const headersMatch = impHeaders.length === existingCols.length &&
+      impHeaders.every((h, i) => h === existingCols[i]);
+    if (!headersMatch) {
+      showToast(
+        `Import blocked — column mismatch.\nSection expects: [${existingCols.join(', ')}]\nFile contains: [${impHeaders.join(', ')}]`,
+        false,
       );
-      const incoming = impRows.map(row =>
-        merged.map(h => {
-          const idx = impHeaders.indexOf(h);
-          return idx >= 0 ? (row[idx] ?? '') : '';
-        }),
-      );
-      finalHeaders = merged;
-      allRowCells = [...realigned, ...incoming];
+      setImporting(false);
+      return;
     }
 
-    const customCols = [...finalHeaders];
-
     try {
-      const { error: colErr } = await supabase.from('sections')
-        .update({ columns: finalHeaders, custom_columns: customCols })
-        .eq('id', secMeta.id);
-      if (colErr) throw new Error('Column update failed: ' + colErr.message);
+      if (mode === 'replace') {
+        // Safe replace: INSERT new rows first, THEN delete old rows by their stored IDs.
+        // If the INSERT fails, no delete runs → existing data is fully preserved.
+        // If the DELETE fails after a successful INSERT, rows are duplicated but not lost.
+        const { data: existingRows, error: fetchErr } = await supabase
+          .from('rows').select('id').eq('section_id', secMeta.id);
+        if (fetchErr) throw new Error('Failed to read existing rows: ' + fetchErr.message);
+        const oldIds = (existingRows ?? []).map(r => r.id as string);
 
-      invalidateSections();
+        const toInsert = impRows.map((cells, i) => ({
+          section_id: secMeta.id,
+          data: Object.fromEntries(impHeaders.map((col, ci) => [col, cells[ci] ?? ''])),
+          row_order: i,
+        }));
+        for (let i = 0; i < toInsert.length; i += 500) {
+          const { error: insErr } = await supabase.from('rows').insert(toInsert.slice(i, i + 500));
+          if (insErr) throw new Error('Row insert failed: ' + insErr.message);
+        }
+        if (oldIds.length > 0) {
+          const { error: delErr } = await supabase.from('rows').delete().in('id', oldIds);
+          if (delErr) throw new Error(
+            'Row cleanup failed — new rows were inserted but old rows may still be present. Reload and re-import if needed. ' + delErr.message,
+          );
+        }
 
-      const { error: delErr } = await supabase.from('rows').delete().eq('section_id', secMeta.id);
-      if (delErr) throw new Error('Row delete failed: ' + delErr.message);
+        showToast(`${impRows.length} row${impRows.length !== 1 ? 's' : ''} imported (${impHeaders.length} columns)`, true);
+        logActivity({
+          userFullName: currentUser?.full_name ?? currentUser?.username,
+          action: 'Imported Data',
+          projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
+          sectionName: secMeta.section_label || sec,
+          details: `Replaced ${oldIds.length} row${oldIds.length !== 1 ? 's' : ''} with ${impRows.length} row${impRows.length !== 1 ? 's' : ''} in ${proj ? (PROJ_NAMES[proj] || proj) : ''} - ${secMeta.section_label || sec}`,
+        });
+      } else if (mode === 'upsert') {
+        // Append / Upsert: UPDATE rows whose normalised Site ID matches an existing row
+        // in THIS section; INSERT rows whose Site ID is new. Never deletes, never changes schema.
+        const { data: existingDbRows, error: fetchErr } = await supabase
+          .from('rows').select('id, data').eq('section_id', secMeta.id);
+        if (fetchErr) throw new Error('Failed to read existing rows: ' + fetchErr.message);
 
-      const toInsert = allRowCells.map((cells, i) => ({
-        section_id: secMeta.id,
-        data: Object.fromEntries(finalHeaders.map((col, ci) => [col, cells[ci] ?? ''])),
-        row_order: i,
-      }));
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const { error: insErr } = await supabase.from('rows').insert(toInsert.slice(i, i + 500));
-        if (insErr) throw new Error('Row insert failed: ' + insErr.message);
+        // Re-build the Site ID → row ID map from fresh DB data (defense-in-depth).
+        const siteIdColName = impHeaders.find(h => /^site[\s_]?id$/i.test(h.trim())) ?? 'Site ID';
+        const existingMap = new Map<string, string>();
+        for (const row of existingDbRows ?? []) {
+          const norm = normalizeSiteId(String((row.data as Record<string, unknown>)[siteIdColName] ?? ''));
+          if (norm) existingMap.set(norm, row.id as string);
+        }
+
+        // Re-classify incoming rows against fresh DB data.
+        const siteIdColIdx = impHeaders.findIndex(h => /^site[\s_]?id$/i.test(h.trim()));
+        const incomingCounts = new Map<string, number>();
+        for (const row of impRows) {
+          const norm = normalizeSiteId(row[siteIdColIdx] ?? '');
+          if (norm) incomingCounts.set(norm, (incomingCounts.get(norm) ?? 0) + 1);
+        }
+
+        const upsertUpdates: Array<{ rowId: string; cells: string[] }> = [];
+        const upsertInserts: string[][] = [];
+        let upsertSkipped = 0;
+
+        for (const row of impRows) {
+          const norm = normalizeSiteId(row[siteIdColIdx] ?? '');
+          if (!norm) { upsertSkipped++; continue; }
+          if ((incomingCounts.get(norm) ?? 0) > 1) { upsertSkipped++; continue; }
+          const existingId = existingMap.get(norm);
+          if (existingId) {
+            upsertUpdates.push({ rowId: existingId, cells: row });
+          } else {
+            upsertInserts.push(row);
+          }
+        }
+
+        // Execute UPDATEs in parallel batches.
+        const now = new Date().toISOString();
+        const UPDATE_BATCH = 20;
+        for (let i = 0; i < upsertUpdates.length; i += UPDATE_BATCH) {
+          const batch = upsertUpdates.slice(i, i + UPDATE_BATCH);
+          const results = await Promise.all(batch.map(upd => {
+            const data = Object.fromEntries(impHeaders.map((col, ci) => [col, upd.cells[ci] ?? '']));
+            return supabase.from('rows').update({ data, updated_at: now }).eq('id', upd.rowId);
+          }));
+          for (const { error } of results) {
+            if (error) throw new Error('Row update failed: ' + error.message);
+          }
+        }
+
+        // Execute INSERTs in batches of 500.
+        const existingCount = existingDbRows?.length ?? 0;
+        const toInsertRows = upsertInserts.map((cells, i) => ({
+          section_id: secMeta.id,
+          data: Object.fromEntries(impHeaders.map((col, ci) => [col, cells[ci] ?? ''])),
+          row_order: existingCount + i,
+        }));
+        for (let i = 0; i < toInsertRows.length; i += 500) {
+          const { error: insErr } = await supabase.from('rows').insert(toInsertRows.slice(i, i + 500));
+          if (insErr) throw new Error('Row insert failed: ' + insErr.message);
+        }
+
+        const totalProcessed = upsertUpdates.length + upsertInserts.length;
+        showToast(
+          `Upsert complete — ${upsertUpdates.length} updated, ${upsertInserts.length} inserted` +
+          (upsertSkipped > 0 ? `, ${upsertSkipped} skipped` : ''),
+          true,
+        );
+        logActivity({
+          userFullName: currentUser?.full_name ?? currentUser?.username,
+          action: 'Imported Data',
+          projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
+          sectionName: secMeta.section_label || sec,
+          details: `Upsert: ${upsertUpdates.length} updated, ${upsertInserts.length} inserted, ${upsertSkipped} skipped — ${proj ? (PROJ_NAMES[proj] || proj) : ''} - ${secMeta.section_label || sec} (${totalProcessed} total)`,
+        });
+      } else {
+        // Append mode: insert new rows without touching existing rows or the section schema.
+        const toInsert = impRows.map((cells, i) => ({
+          section_id: secMeta.id,
+          data: Object.fromEntries(impHeaders.map((col, ci) => [col, cells[ci] ?? ''])),
+          row_order: rows.length + i,
+        }));
+        for (let i = 0; i < toInsert.length; i += 500) {
+          const { error: insErr } = await supabase.from('rows').insert(toInsert.slice(i, i + 500));
+          if (insErr) throw new Error('Row insert failed: ' + insErr.message);
+        }
+
+        showToast(`${impRows.length} row${impRows.length !== 1 ? 's' : ''} appended (${impHeaders.length} columns)`, true);
+        logActivity({
+          userFullName: currentUser?.full_name ?? currentUser?.username,
+          action: 'Imported Data',
+          projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
+          sectionName: secMeta.section_label || sec,
+          details: `Appended ${impRows.length} row${impRows.length !== 1 ? 's' : ''} to ${proj ? (PROJ_NAMES[proj] || proj) : ''} - ${secMeta.section_label || sec}`,
+        });
       }
-
-      const count = allRowCells.length;
-      showToast(`${count} row${count !== 1 ? 's' : ''} imported (${finalHeaders.length} columns)`, true);
-      logActivity({
-        userFullName: currentUser?.full_name ?? currentUser?.username,
-        action: 'Imported Data',
-        projectName: proj ? (PROJ_NAMES[proj] || proj) : null,
-        sectionName: secMeta.section_label || sec,
-        details: `Imported ${count} row${count !== 1 ? 's' : ''} into ${proj ? (PROJ_NAMES[proj] || proj) : ''} - ${secMeta.section_label || sec}`,
-      });
+      // sections.columns and sections.custom_columns are intentionally NOT modified.
       await loadSection();
     } catch (err) {
       showToast('Import failed — ' + ((err as Error).message || 'Unknown error'), false);
@@ -1729,40 +1948,71 @@ export default function NetworkScopes() {
       )}
 
       {/* ── Import confirmation modal ─────────────────────────────────────── */}
-      {importPending && (
-        <div className={styles.detailOverlay} style={{ zIndex: 1200 }}
-          onClick={() => setImportPending(null)}>
-          <div className={styles.importConfirmModal} onClick={e => e.stopPropagation()}>
-            <div className={styles.importConfirmTitle}>{t('ns_importTitle')}</div>
-            <div className={styles.importConfirmSub}>
-              <strong>This will affect your existing data!</strong>
-              <br /><br />
-              Current rows: <strong>{rows.length}</strong>
-              &nbsp;·&nbsp;
-              Incoming rows: <strong>{importPending.rows.length}</strong>
-              &nbsp;·&nbsp;
-              File: <strong>{importPending.fileName}</strong>
-            </div>
-            <div className={styles.importConfirmBtns}>
-              <button
-                className={styles.btnDanger}
-                onClick={() => doImportWith(importPending, 'replace')}
-              >
-                {t('ns_replace')}
-              </button>
-              <button
-                className={styles.btnGreen}
-                onClick={() => doImportWith(importPending, 'append')}
-              >
-                {t('ns_append')}
-              </button>
-              <button className={styles.btnGhost} onClick={() => setImportPending(null)}>
-                {t('ns_cancel')}
-              </button>
+      {importPending && (() => {
+        const ua = importPending.upsert;
+        const canUpsert = ua.isSafeForUpsert && ua.siteIdColIdx >= 0;
+        return (
+          <div className={styles.detailOverlay} style={{ zIndex: 1200 }}
+            onClick={() => setImportPending(null)}>
+            <div className={styles.importConfirmModal} onClick={e => e.stopPropagation()}>
+              <div className={styles.importConfirmTitle}>Import Preview</div>
+              <div className={styles.importConfirmSub}>
+                <div><strong>Section:</strong> {projName} / {secLabel}</div>
+                <div><strong>File:</strong> {importPending.fileName}</div>
+                <div><strong>Existing rows:</strong> {rows.length}</div>
+                <div><strong>Rows in file:</strong> {importPending.rows.length}</div>
+                <div style={{ marginTop: 6, borderTop: '1px solid var(--border-muted)', paddingTop: 6 }}>
+                  <div><strong>Mode:</strong> {canUpsert ? 'Append / Upsert (by Site ID)' : ua.siteIdColIdx >= 0 ? 'Append (upsert blocked — see below)' : 'Append only'}</div>
+                  {canUpsert && (
+                    <>
+                      <div><strong>New rows to add:</strong> {ua.toInsert.length}</div>
+                      <div><strong>Existing rows to update:</strong> {ua.toUpdate.length}</div>
+                      {ua.conflicts.length > 0 && <div><strong>Conflicts:</strong> {ua.conflicts.length} (duplicate Site IDs in file)</div>}
+                      {ua.skipped.length  > 0 && <div><strong>Skipped:</strong>   {ua.skipped.length}  (blank Site ID — excluded)</div>}
+                    </>
+                  )}
+                  {!canUpsert && (
+                    <>
+                      <div><strong>New rows to add:</strong> {importPending.rows.length}</div>
+                      <div><strong>Existing rows to update:</strong> 0</div>
+                      {ua.conflicts.length > 0 && <div><strong>Conflicts:</strong> {ua.conflicts.length} (duplicate Site IDs)</div>}
+                      {ua.skipped.length  > 0 && <div><strong>Skipped:</strong>   {ua.skipped.length}  (blank Site ID)</div>}
+                    </>
+                  )}
+                </div>
+                {ua.unsafeReason && (
+                  <div className={styles.importConfirmWarn} style={{ marginTop: 8 }}>
+                    ⚠ {ua.unsafeReason}
+                  </div>
+                )}
+              </div>
+              <div className={styles.importConfirmBtns}>
+                {canUpsert && (
+                  <button className={styles.btnGreen} onClick={() => doImportWith(importPending, 'upsert')}>
+                    Import / Upsert
+                  </button>
+                )}
+                {!canUpsert && (
+                  <button className={styles.btnGreen} onClick={() => doImportWith(importPending, 'append')}>
+                    Append &amp; Import
+                  </button>
+                )}
+                {rows.length > 0 && (
+                  <div className={styles.importConfirmWarn}>
+                    ⚠ Replace All will permanently delete all {rows.length} existing row{rows.length !== 1 ? 's' : ''} and insert {importPending.rows.length} row{importPending.rows.length !== 1 ? 's' : ''} from the file.
+                  </div>
+                )}
+                <button className={styles.btnDanger} onClick={() => doImportWith(importPending, 'replace')}>
+                  Replace All
+                </button>
+                <button className={styles.btnGhost} onClick={() => setImportPending(null)}>
+                  {t('ns_cancel')}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Import loading overlay ────────────────────────────────────────── */}
       {importing && (
