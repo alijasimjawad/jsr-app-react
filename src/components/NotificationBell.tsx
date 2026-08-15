@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { BRAND, storageKey as brandStorageKey } from '../config/brand';
+import { storageKey as brandStorageKey } from '../config/brand';
 import styles from './NotificationBell.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -292,29 +292,6 @@ export default function NotificationBell() {
     setLoadingPush(false);
   }
 
-  // ⚠️  Temporary test button — sends a real push to yourself.
-  //     Remove or keep after manual end-to-end verification (noted in Phase 13 summary).
-  async function sendTestPush() {
-    if (!currentUser) return;
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (!sub) return;
-      await fetch('/api/send-push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subscription: sub.toJSON(),
-          title: `${BRAND.shortName} — test push`,
-          body: `Push working for ${currentUser.full_name || currentUser.username}`,
-          url: '/',
-        }),
-      });
-    } catch (err) {
-      console.error('[Push] test send failed:', err);
-    }
-  }
-
   // ── Mark all read ────────────────────────────────────────────────────────────
 
   function markAllRead() {
@@ -385,12 +362,6 @@ export default function NotificationBell() {
                   >
                     {loadingPush ? '…' : pushEnabled ? 'Disable' : 'Enable'}
                   </button>
-                  {/* ⚠️ Temporary — remove after verifying end-to-end push delivery */}
-                  {pushEnabled && (
-                    <button type="button" className={styles.testBtn} onClick={sendTestPush}>
-                      Test
-                    </button>
-                  )}
                 </div>
               </>
             )}
