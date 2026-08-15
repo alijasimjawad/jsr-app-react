@@ -63,8 +63,8 @@ export default function FinRevenue() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fProj, setFProj] = useState('');
-  const [fMonth, setFMonth] = useState(new Date().getMonth() + 1);
-  const [fYear, setFYear] = useState(new Date().getFullYear());
+  const [fMonth, setFMonth] = useState(0);
+  const [fYear, setFYear] = useState(0);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
   const [modalOpen, setModalOpen] = useState(false);
