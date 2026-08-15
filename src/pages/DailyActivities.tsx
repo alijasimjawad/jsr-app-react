@@ -1235,6 +1235,7 @@ export default function DailyActivities() {
 
   // ── WhatsApp ──
   function sendWa() {
+    if (!hasPerm('da_share_whatsapp')) { showToast('Not authorized: WhatsApp sharing is not available for your role.', false); return; }
     const allTags = siteInput.trim() && !siteTags.includes(siteInput.trim())
       ? [...siteTags, siteInput.trim()] : siteTags;
     const memberIds = [...selectedMemberIds];
@@ -1260,6 +1261,7 @@ export default function DailyActivities() {
   }
 
   function shareWa(a: DailyActivity) {
+    if (!hasPerm('da_share_whatsapp')) { showToast('Not authorized: WhatsApp sharing is not available for your role.', false); return; }
     const teamNames = Array.isArray(a.team_member_names) ? a.team_member_names : [];
     const carType = a.car_id ? getCarName(a.car_id) : null;
     const driverName = a.driver_id ? (teamMembers.find(m => m.id === a.driver_id)?.full_name || a.driver_id) : null;
@@ -1449,6 +1451,7 @@ export default function DailyActivities() {
 
   // ── Team Report: 2-sheet workbook for the selected month/year ──
   async function exportTeamReport() {
+    if (!hasPerm('da_export')) { showToast('Not authorized: Export is not available for your role.', false); return; }
     setTrExporting(true);
     const dLast = new Date(trYear, trMonth, 0);
     const first = `${trYear}-${String(trMonth).padStart(2, '0')}-01`;
@@ -1544,6 +1547,7 @@ export default function DailyActivities() {
 
   // ── Excel export of the currently filtered/sorted results ──
   function exportCsv() {
+    if (!hasPerm('da_export')) { showToast('Not authorized: Export is not available for your role.', false); return; }
     const data = sortedActivities.map(a => ({
       'Date': a.date ? fmtDate(a.date) : '',
       'Project': a.project || '',
@@ -2224,12 +2228,14 @@ export default function DailyActivities() {
             {editingId && (
               <button className={styles.btnGhost} onClick={cancelEdit}>{t('da_cancelEdit')}</button>
             )}
-            <button className={`${styles.btnGhost} ${styles.btnWa}`} onClick={sendWa}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-              </svg>
-              {t('da_sendToWhatsApp')}
-            </button>
+            {hasPerm('da_share_whatsapp') && (
+              <button className={`${styles.btnGhost} ${styles.btnWa}`} onClick={sendWa}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                </svg>
+                {t('da_sendToWhatsApp')}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2313,20 +2319,24 @@ export default function DailyActivities() {
               {t('da_filters')}
               {hasAdvancedFilters && <span className={styles.filtersDot} />}
             </button>
-            <button type="button" className={styles.exportBtn} title={t('da_export')} onClick={exportCsv}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              {t('da_export')}
-            </button>
-            <button type="button" className={styles.exportBtn} title="Team Report" onClick={() => setShowTeamReport(true)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-              Team Report
-            </button>
+            {hasPerm('da_export') && (
+              <button type="button" className={styles.exportBtn} title={t('da_export')} onClick={exportCsv}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                {t('da_export')}
+              </button>
+            )}
+            {hasPerm('da_export') && (
+              <button type="button" className={styles.exportBtn} title="Team Report" onClick={() => setShowTeamReport(true)}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                Team Report
+              </button>
+            )}
             {hasActiveFilters && (
               <button type="button" className={styles.clearFiltersBtn} onClick={clearFilters}>
                 {t('da_clearFilters')}
@@ -2442,11 +2452,13 @@ export default function DailyActivities() {
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                           </svg>
                         </button>
-                        <button className={`${styles.actBtn} ${styles.actBtnGreen}`} title="Share via WhatsApp" onClick={() => shareWa(a)}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.2">
-                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-                          </svg>
-                        </button>
+                        {hasPerm('da_share_whatsapp') && (
+                          <button className={`${styles.actBtn} ${styles.actBtnGreen}`} title="Share via WhatsApp" onClick={() => shareWa(a)}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.2">
+                              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                            </svg>
+                          </button>
+                        )}
                         {hasPerm('da_delete_rows') && (
                           <button className={`${styles.actBtn} ${styles.actBtnRed}`} title="Delete" onClick={() => deleteActivity(a.id)}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2.2">
@@ -2617,9 +2629,11 @@ export default function DailyActivities() {
               </div>
             )}
             <div className={styles.modalActions} style={{ marginTop: 16 }}>
-              <button className={styles.btnGhost} onClick={() => shareWa(viewActivity)}>
-                {t('da_shareWhatsApp')}
-              </button>
+              {hasPerm('da_share_whatsapp') && (
+                <button className={styles.btnGhost} onClick={() => shareWa(viewActivity)}>
+                  {t('da_shareWhatsApp')}
+                </button>
+              )}
               <button className={styles.btnPrimary} onClick={() => setViewActivity(null)}>{t('da_close')}</button>
             </div>
           </div>

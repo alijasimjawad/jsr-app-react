@@ -538,6 +538,7 @@ export default function SitesDB() {
 
   // ── Export ──
   function exportSites() {
+    if (!hasPerm('sitesdb_export')) { showToast('Not authorized: Export is not available for your role.', false); return; }
     if (!filtered.length) { showToast('No sites to export', false); return; }
     const data = filtered.map(r => ({
       'Operator': r.operator ?? '', 'Site Code': r.site_code ?? '', 'Site Name': r.site_name ?? '',

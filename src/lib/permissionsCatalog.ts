@@ -95,9 +95,11 @@ export const ACTION_SCOPES: ActionScope[] = [
     id: 'daily_activities',
     label: 'Daily Activities',
     actions: [
-      { key: 'da_add_rows',    label: 'Add Rows' },
-      { key: 'da_edit_rows',   label: 'Edit Rows' },
-      { key: 'da_delete_rows', label: 'Delete Rows' },
+      { key: 'da_add_rows',       label: 'Add Rows' },
+      { key: 'da_edit_rows',      label: 'Edit Rows' },
+      { key: 'da_delete_rows',    label: 'Delete Rows' },
+      { key: 'da_export',         label: 'Export' },
+      { key: 'da_share_whatsapp', label: 'Share via WhatsApp' },
     ],
   },
   {
@@ -372,8 +374,6 @@ export const LEGACY_OPEN_ACTIONS: Record<string, string> = {
   mywork_expenses_add: 'view_my_expenses',
   mywork_expenses_edit: 'view_my_expenses',
   mywork_expenses_delete: 'view_my_expenses',
-
-  sitesdb_export: 'view_sites_db',
 
   activity_log_export: 'view_activity_log',
 };
