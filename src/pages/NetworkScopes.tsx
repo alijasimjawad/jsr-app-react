@@ -374,13 +374,30 @@ export default function NetworkScopes() {
       c => !LEGACY_DEFAULT_COLS.has(c) || customCols.has(c),
     );
 
-    const { data: rowData, error: rowErr } = await supabase
+    let { data: rowData, error: rowErr } = await supabase
       .from('rows')
       .select('id, data, row_order')
       .eq('section_id', secMeta.id)
       .order('row_order', { ascending: true });
 
     if (rowErr) { setError(rowErr.message); setLoading(false); return; }
+
+    // Unlike the sections list, this query is never cached — it runs fresh
+    // every load. But a transient auth/session hiccup (token mid-refresh,
+    // brief network blip) can still make Supabase/PostgREST return a
+    // successful response with zero rows instead of an actual error, which
+    // is indistinguishable here from a genuinely empty section. One silent
+    // retry catches that case without needing a hard refresh; a truly empty
+    // section will just return empty again and render normally.
+    if (!rowData || rowData.length === 0) {
+      const retry = await supabase
+        .from('rows')
+        .select('id, data, row_order')
+        .eq('section_id', secMeta.id)
+        .order('row_order', { ascending: true });
+      if (retry.error) { setError(retry.error.message); setLoading(false); return; }
+      rowData = retry.data;
+    }
 
     const gridRows = (rowData ?? []).map(r => ({
       id: r.id as string,
