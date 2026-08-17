@@ -76,10 +76,28 @@ function NetworkScopesTree() {
   const [projectsReady, setProjectsReady] = useState(() => projectsLoaded());
 
   useEffect(() => {
-    ensureProjectsLoaded().then(() => {
+    let cancelled = false;
+    // ensureProjectsLoaded() resolves even when the underlying fetch failed
+    // (the cache module swallows the error and just leaves itself unloaded
+    // so the *next* call can retry). If we trusted the resolved promise alone,
+    // a single transient hiccup would permanently set projectsReady=true with
+    // an empty PROJECTS list — and since Sidebar is persistent layout chrome
+    // that never remounts on route changes, the whole Network Scopes section
+    // would stay hidden (see the `return null` below) until a hard refresh.
+    // Instead, check whether the load actually succeeded and keep retrying
+    // until it does.
+    async function load() {
+      await ensureProjectsLoaded();
+      if (cancelled) return;
+      if (!projectsLoaded()) {
+        setTimeout(load, 1500);
+        return;
+      }
       setProjects(getProjectKeys());
       setProjectsReady(true);
-    });
+    }
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   // Accordion: only one project open at a time. Initialize from params (current route) or localStorage.
