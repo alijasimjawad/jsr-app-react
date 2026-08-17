@@ -36,14 +36,15 @@ const DEFAULT_SECTIONS: Record<string, string[]> = {
   huawei: ['ftk', 'tdd', 'addsector'],
   ipt:    ['tdd'],
   moj:    ['ftk', 'tdd', 'addsector'],
+  metco:  ['ftk', 'tdd', 'addsector'],
 };
 
 const PROJ_COLORS: Record<string, string> = {
-  zain: '#3B82F6', nokia: '#10B981', huawei: '#EF4444', ipt: '#F43F5E', moj: '#8B5CF6',
+  zain: '#3B82F6', nokia: '#10B981', huawei: '#EF4444', ipt: '#F43F5E', moj: '#8B5CF6', metco: '#F59E0B',
 };
 
 const PROJ_INITIALS: Record<string, string> = {
-  zain: 'ZP', nokia: 'NP', huawei: 'HP', ipt: 'IP', moj: 'MJ',
+  zain: 'ZP', nokia: 'NP', huawei: 'HP', ipt: 'IP', moj: 'MJ', metco: 'MP',
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ const DEFAULT_SECTIONS: Record<string, string[]> = {
   huawei: ['ftk', 'tdd', 'addsector'],
   ipt:    ['tdd'],
   moj:    ['ftk', 'tdd', 'addsector'],
+  metco:  ['ftk', 'tdd', 'addsector'],
 };
 
 const DEFAULT_HEADERS = ['Site ID', 'Governate', 'Delivery', 'Installation', 'Integration Status', 'ATP Status', 'Clearance & Tools', 'Final ATP'];
