@@ -342,12 +342,32 @@ export default function NetworkScopes() {
     setRows([]);
 
     await ensureSectionsLoaded();
-    const sections = getSections();
-    const secMeta = sections.find(
+    let sections = getSections();
+    let secMeta = sections.find(
       s => s.project_name === proj && s.section_name === sec && !s.is_deleted,
     );
 
-    if (!secMeta) { setLoading(false); return; }
+    // The sections list is cached for the whole browser tab session. If this
+    // project/section isn't in it, that's indistinguishable from here between
+    // "genuinely doesn't exist" and "cache loaded stale/incomplete" (e.g. a
+    // brief auth-session timing hiccup on first load, or the section was
+    // added after this tab's cache was already populated). Force one real
+    // refetch before giving up, so a stale cache self-heals instead of
+    // silently falling into the "No data" empty state forever.
+    if (!secMeta) {
+      invalidateSections();
+      await ensureSectionsLoaded();
+      sections = getSections();
+      secMeta = sections.find(
+        s => s.project_name === proj && s.section_name === sec && !s.is_deleted,
+      );
+    }
+
+    if (!secMeta) {
+      setError(t('ns_sectionNotFound', { proj, sec }));
+      setLoading(false);
+      return;
+    }
 
     const customCols = new Set<string>(secMeta.custom_columns || []);
     const cols = (secMeta.columns || []).filter(
