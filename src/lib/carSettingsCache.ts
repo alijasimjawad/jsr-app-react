@@ -11,7 +11,14 @@ export async function ensureCarKmRateLoaded(): Promise<void> {
   if (_loaded) return;
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
-    const { data } = await supabase.from('app_settings').select('value').eq('key', RATE_KEY).maybeSingle();
+    const { data, error } = await supabase.from('app_settings').select('value').eq('key', RATE_KEY).maybeSingle();
+    if (error) {
+      // Leave _loaded=false so the next call retries instead of silently
+      // sticking on DEFAULT_RATE forever if the real rate failed to load.
+      console.error('[carSettingsCache] load failed, will retry next call:', error);
+      _inFlight = null;
+      return;
+    }
     const n = data?.value ? parseFloat(data.value) : NaN;
     if (!isNaN(n) && n > 0) _rate = n;
     _loaded = true;

@@ -16,11 +16,18 @@ export async function ensureCarsLoaded(): Promise<void> {
   if (_loaded) return;
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('cars')
       .select('*')
       .eq('is_active', true)
       .order('name', { ascending: true });
+    if (error) {
+      // Leave _loaded=false so the next call retries instead of getting stuck
+      // on a permanently-empty cache until a hard refresh.
+      console.error('[carsCache] load failed, will retry next call:', error);
+      _inFlight = null;
+      return;
+    }
     _cars = (data ?? []) as CarMeta[];
     _loaded = true;
     _inFlight = null;

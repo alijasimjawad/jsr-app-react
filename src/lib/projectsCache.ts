@@ -17,11 +17,18 @@ export async function ensureProjectsLoaded(): Promise<void> {
   if (_loaded) return;
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('projects')
       .select('*')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
+    if (error) {
+      // Leave _loaded=false so the next call retries instead of getting stuck
+      // on a permanently-empty cache until a hard refresh.
+      console.error('[projectsCache] load failed, will retry next call:', error);
+      _inFlight = null;
+      return;
+    }
     _projects = (data ?? []) as ProjectMeta[];
     _loaded = true;
     _inFlight = null;
