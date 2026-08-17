@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { ensureFullLoad as ensureSitesPreload } from '../lib/sitesCache';
+import { ensureProjectsLoaded } from '../lib/projectsCache';
 import { FIELD_ROLE_DEFAULT_KEYS, LEGACY_ACTION_KEY, LEGACY_OPEN_ACTIONS } from '../lib/permissionsCatalog';
 import { buildAuthEmail } from '../config/brand';
 
@@ -71,13 +72,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ session, currentUser, loading: false });
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      let currentUser: UserProfile | null = null;
-      if (session) {
-        currentUser = await fetchProfile(session.user.id);
-        if (currentUser) ensureSitesPreload().catch(() => {}); // warm cache on login
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // INITIAL_SESSION is handled by getSession() above.
+      // SIGNED_IN is handled by login() which calls fetchProfile() and sets state atomically.
+      // Letting either path also call fetchProfile() here creates a race where a slow/failed
+      // second fetch can overwrite the good currentUser with null after Sidebar has rendered.
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+        if (session) {
+          ensureSitesPreload().catch(() => {});
+          ensureProjectsLoaded().catch(() => {});
+        }
+        return;
       }
-      setState(prev => ({ ...prev, session, currentUser }));
+      if (event === 'SIGNED_OUT' || !session) {
+        setState(prev => ({ ...prev, session: null, currentUser: null }));
+        return;
+      }
+      // TOKEN_REFRESHED / USER_UPDATED — re-sync session; preserve prev currentUser if fetch fails.
+      const refreshed = await fetchProfile(session.user.id);
+      setState(prev => ({ ...prev, session, currentUser: refreshed ?? prev.currentUser }));
     });
 
     return () => subscription.unsubscribe();

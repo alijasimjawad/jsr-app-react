@@ -16,7 +16,7 @@ import { FinanceIcon } from '../pages/FinTeam';
 import { PROJ_NAMES, SEC_LABELS } from '../pages/NetworkScopes';
 import { ensureSectionsLoaded, getSections, invalidateSections } from '../lib/sectionsCache';
 import type { SectionMeta } from '../lib/sectionsCache';
-import { ensureProjectsLoaded, getProjectKeys } from '../lib/projectsCache';
+import { ensureProjectsLoaded, getProjectKeys, projectsLoaded } from '../lib/projectsCache';
 import { VIEW_CORE, VIEW_DAILY_WORK, VIEW_FINANCE, VIEW_HR, VIEW_ADMIN } from '../lib/permissionsCatalog';
 
 
@@ -72,10 +72,14 @@ function NetworkScopesTree() {
   const params = useParams<{ proj?: string; sec?: string }>();
   const navigate = useNavigate();
   const [sections, setSections] = useState<SectionMeta[]>([]);
-  const [PROJECTS, setProjects] = useState<string[]>([]);
+  const [PROJECTS, setProjects] = useState<string[]>(() => getProjectKeys());
+  const [projectsReady, setProjectsReady] = useState(() => projectsLoaded());
 
   useEffect(() => {
-    ensureProjectsLoaded().then(() => setProjects(getProjectKeys()));
+    ensureProjectsLoaded().then(() => {
+      setProjects(getProjectKeys());
+      setProjectsReady(true);
+    });
   }, []);
 
   // Accordion: only one project open at a time. Initialize from params (current route) or localStorage.
@@ -312,7 +316,7 @@ function NetworkScopesTree() {
   }
 
   const visibleProjects = PROJECTS.filter(p => hasPerm(`view_${p}`));
-  if (visibleProjects.length === 0) return null;
+  if (projectsReady && visibleProjects.length === 0) return null;
 
   const canManageSec = hasPerm('sdb_rename_section') || hasPerm('sdb_delete_section');
 
