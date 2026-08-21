@@ -101,6 +101,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return error.message;
     if (!data.session) return 'Login failed — no session returned';
+    // Warm the projects/sites caches directly here (in parallel with the
+    // profile fetch below) instead of relying solely on the async
+    // onAuthStateChange('SIGNED_IN') listener further down to trigger them.
+    // Login.tsx calls navigate() immediately after login() resolves, which
+    // mounts Sidebar/NetworkScopesTree right away — on a brand-new sign-in
+    // (no persisted session yet) that mount can race ahead of the listener
+    // callback, unlike a full page load where getSession() and the
+    // 'INITIAL_SESSION' event have more natural lead time. Kicking these off
+    // here, as early as possible with the confirmed-good session, minimizes
+    // that race for the case users have reported: Network Scopes missing
+    // from the sidebar right after logging in, until a manual refresh.
+    ensureSitesPreload().catch(() => {});
+    ensureProjectsLoaded().catch(() => {});
     const profile = await fetchProfile(data.session.user.id);
     if (!profile) return 'Login succeeded but user profile not found. Run the migration script first.';
     setState(prev => ({ ...prev, session: data.session, currentUser: profile }));
