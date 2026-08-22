@@ -20,7 +20,7 @@ export async function ensureSectionsLoaded(): Promise<void> {
   if (_loaded) return;
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('sections')
       .select('*')
       .order('created_at', { ascending: true });
@@ -30,6 +30,26 @@ export async function ensureSectionsLoaded(): Promise<void> {
       console.error('[sectionsCache] load failed, will retry next call:', error);
       _inFlight = null;
       return;
+    }
+    // A transient auth/session hiccup right after a fresh sign-in (token
+    // still propagating) can make PostgREST return a successful response
+    // with zero rows instead of an actual error — indistinguishable from a
+    // genuinely empty table here. public.sections is never actually empty
+    // in this app, so treat a first-try empty result as suspicious and
+    // retry once inline before trusting it and setting _loaded=true; a
+    // flag flip to true with an empty list would otherwise permanently
+    // hide Network Scopes sections until a hard refresh.
+    if (!data || data.length === 0) {
+      const retry = await supabase
+        .from('sections')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (retry.error) {
+        console.error('[sectionsCache] retry failed, will retry next call:', retry.error);
+        _inFlight = null;
+        return;
+      }
+      data = retry.data;
     }
     _sections = (data ?? []) as SectionMeta[];
     _loaded = true;

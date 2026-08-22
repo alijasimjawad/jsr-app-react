@@ -17,7 +17,7 @@ export async function ensureProjectsLoaded(): Promise<void> {
   if (_loaded) return;
   if (_inFlight) return _inFlight;
   _inFlight = (async () => {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('projects')
       .select('*')
       .eq('is_active', true)
@@ -28,6 +28,28 @@ export async function ensureProjectsLoaded(): Promise<void> {
       console.error('[projectsCache] load failed, will retry next call:', error);
       _inFlight = null;
       return;
+    }
+    // A transient auth/session hiccup right after a fresh sign-in (token
+    // still propagating) can make PostgREST return a successful response
+    // with zero rows instead of an actual error — indistinguishable from a
+    // genuinely empty table here. public.projects is never actually empty
+    // in this app, so treat a first-try empty result as suspicious and
+    // retry once inline before trusting it and setting _loaded=true; a
+    // caller-side flag flip to true with an empty list would otherwise
+    // permanently hide Network Scopes until a hard refresh (see
+    // NetworkScopesTree's projectsReady check in Sidebar.tsx).
+    if (!data || data.length === 0) {
+      const retry = await supabase
+        .from('projects')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      if (retry.error) {
+        console.error('[projectsCache] retry failed, will retry next call:', retry.error);
+        _inFlight = null;
+        return;
+      }
+      data = retry.data;
     }
     _projects = (data ?? []) as ProjectMeta[];
     _loaded = true;
