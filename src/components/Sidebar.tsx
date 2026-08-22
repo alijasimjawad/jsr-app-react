@@ -16,7 +16,7 @@ import { FinanceIcon } from '../pages/FinTeam';
 import { PROJ_NAMES, SEC_LABELS } from '../pages/NetworkScopes';
 import { ensureSectionsLoaded, getSections, invalidateSections } from '../lib/sectionsCache';
 import type { SectionMeta } from '../lib/sectionsCache';
-import { ensureProjectsLoaded, getProjectKeys, projectsLoaded } from '../lib/projectsCache';
+import { ensureProjectsLoaded, getProjectKeys, invalidateProjects, projectsLoaded } from '../lib/projectsCache';
 import { VIEW_CORE, VIEW_DAILY_WORK, VIEW_FINANCE, VIEW_HR, VIEW_ADMIN } from '../lib/permissionsCatalog';
 
 
@@ -74,27 +74,46 @@ function NetworkScopesTree() {
   const navigate = useNavigate();
   const [sections, setSections] = useState<SectionMeta[]>([]);
   const [PROJECTS, setProjects] = useState<string[]>(() => getProjectKeys());
-  const [projectsReady, setProjectsReady] = useState(() => projectsLoaded());
+  // Only trust an initial "ready" if the cache also has data. A
+  // loaded-but-empty cache (transient JWT race on fresh login) should be
+  // treated as still loading, so the guard below keeps the header mounted
+  // while the effect retries the fetch — otherwise Network Scopes would
+  // vanish for the entire session until a hard refresh.
+  const [projectsReady, setProjectsReady] = useState(
+    () => projectsLoaded() && getProjectKeys().length > 0,
+  );
 
   useEffect(() => {
     let cancelled = false;
-    // ensureProjectsLoaded() resolves even when the underlying fetch failed
-    // (the cache module swallows the error and just leaves itself unloaded
-    // so the *next* call can retry). If we trusted the resolved promise alone,
-    // a single transient hiccup would permanently set projectsReady=true with
-    // an empty PROJECTS list — and since Sidebar is persistent layout chrome
-    // that never remounts on route changes, the whole Network Scopes section
-    // would stay hidden (see the `return null` below) until a hard refresh.
-    // Instead, check whether the load actually succeeded and keep retrying
-    // until it does.
+    let attempt = 0;
+    // ensureProjectsLoaded() can resolve with the cache marked loaded but
+    // *empty* (fetch succeeded with zero rows — e.g. auth token not yet
+    // attached to the PostgREST request during a fresh sign-in, so RLS
+    // treats it as anon and returns nothing). Committing projectsReady=true
+    // with an empty PROJECTS list trips the `return null` guard below and
+    // hides Network Scopes until a hard refresh, because Sidebar is
+    // persistent layout chrome that never remounts on route changes. Treat
+    // empty as failure, invalidate so the next call re-fetches, and retry
+    // a small bounded number of times.
+    const MAX_ATTEMPTS = 3;
     async function load() {
+      attempt += 1;
       await ensureProjectsLoaded();
       if (cancelled) return;
-      if (!projectsLoaded()) {
-        setTimeout(load, 1500);
+      const keys = getProjectKeys();
+      if (keys.length === 0) {
+        if (projectsLoaded()) invalidateProjects();
+        if (attempt < MAX_ATTEMPTS) {
+          setTimeout(load, 1000);
+          return;
+        }
+        // Give up: commit so the guard evaluates and the section hides
+        // cleanly (no permission leakage — visibleProjects is empty).
+        setProjects(keys);
+        setProjectsReady(true);
         return;
       }
-      setProjects(getProjectKeys());
+      setProjects(keys);
       setProjectsReady(true);
     }
     load();
