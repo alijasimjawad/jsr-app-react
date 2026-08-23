@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { storageKey } from '../config/brand';
 
 export interface ProjectMeta {
   id: string;
@@ -9,9 +10,25 @@ export interface ProjectMeta {
   is_active: boolean;
 }
 
+const PROJECTS_STORAGE_KEY = storageKey('projects_cache_v1');
+
 let _projects: ProjectMeta[] = [];
 let _loaded = false;
 let _inFlight: Promise<void> | null = null;
+
+// Seed from last session's localStorage snapshot immediately at import time
+// (synchronous, before any component mounts) so the Sidebar's Network Scopes
+// tree can render the previously-known project list on first paint instead
+// of empty — eliminating the visible "pop in a second later" flash while the
+// real network fetch below still runs in the background to correct it.
+// _loaded stays false here on purpose: this is just a display seed, not a
+// substitute for a real, verified load.
+try {
+  const cached = localStorage.getItem(PROJECTS_STORAGE_KEY);
+  if (cached) _projects = JSON.parse(cached) as ProjectMeta[];
+} catch {
+  // Corrupt/unavailable localStorage — ignore, falls back to normal load.
+}
 
 export async function ensureProjectsLoaded(): Promise<void> {
   if (_loaded) return;
@@ -54,6 +71,11 @@ export async function ensureProjectsLoaded(): Promise<void> {
     _projects = (data ?? []) as ProjectMeta[];
     _loaded = true;
     _inFlight = null;
+    try {
+      localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(_projects));
+    } catch {
+      // Storage full/unavailable — non-fatal, just skip the seed for next time.
+    }
   })();
   return _inFlight;
 }

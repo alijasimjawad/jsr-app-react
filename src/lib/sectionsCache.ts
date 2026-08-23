@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { storageKey } from '../config/brand';
 
 export interface SectionMeta {
   id: string;
@@ -12,9 +13,23 @@ export interface SectionMeta {
   created_at: string;
 }
 
+const SECTIONS_STORAGE_KEY = storageKey('sections_cache_v1');
+
 let _sections: SectionMeta[] = [];
 let _loaded = false;
 let _inFlight: Promise<void> | null = null;
+
+// Seed from last session's localStorage snapshot immediately at import time
+// — same rationale as projectsCache.ts: lets the Sidebar render the
+// previously-known section list on first paint instead of a brief empty
+// gap, while the real fetch below still runs to correct it. _loaded stays
+// false: this is a display seed only, not a substitute for a verified load.
+try {
+  const cached = localStorage.getItem(SECTIONS_STORAGE_KEY);
+  if (cached) _sections = JSON.parse(cached) as SectionMeta[];
+} catch {
+  // Corrupt/unavailable localStorage — ignore, falls back to normal load.
+}
 
 export async function ensureSectionsLoaded(): Promise<void> {
   if (_loaded) return;
@@ -54,6 +69,11 @@ export async function ensureSectionsLoaded(): Promise<void> {
     _sections = (data ?? []) as SectionMeta[];
     _loaded = true;
     _inFlight = null;
+    try {
+      localStorage.setItem(SECTIONS_STORAGE_KEY, JSON.stringify(_sections));
+    } catch {
+      // Storage full/unavailable — non-fatal, just skip the seed for next time.
+    }
   })();
   return _inFlight;
 }

@@ -72,7 +72,10 @@ function NetworkScopesTree() {
   const { t } = useTranslation();
   const params = useParams<{ proj?: string; sec?: string }>();
   const navigate = useNavigate();
-  const [sections, setSections] = useState<SectionMeta[]>([]);
+  // Seeded from sectionsCache's localStorage snapshot (if any) so a
+  // returning user sees last-known sections immediately instead of a brief
+  // empty gap while the effect below runs its real, corrective fetch.
+  const [sections, setSections] = useState<SectionMeta[]>(() => getSections());
   const [PROJECTS, setProjects] = useState<string[]>(() => getProjectKeys());
   // Only trust an initial "ready" if the cache also has data. A
   // loaded-but-empty cache (transient JWT race on fresh login) should be
