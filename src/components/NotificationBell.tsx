@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { storageKey as brandStorageKey } from '../config/brand';
-import { sendPushToUser } from '../lib/pushNotify';
 import styles from './NotificationBell.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -278,20 +277,39 @@ export default function NotificationBell() {
     setLoadingPush(false);
   }
 
-  // Sends a real push through /api/send-push to this user's saved
-  // subscription, so "Enable" can be verified immediately on this device
-  // instead of waiting for a real activity-log/expense event to trigger one.
+  // Sends a real push straight to *this* browser's own live subscription
+  // (not via sendPushToUser's DB lookup). push_subscriptions only stores one
+  // row per user_id (upsert onConflict: 'user_id'), so if push was ever
+  // enabled on another device too, that row may hold the OTHER device's
+  // subscription — routing the test there instead of here. Going straight to
+  // reg.pushManager.getSubscription() guarantees the test always lands on
+  // the device that clicked the button.
   async function sendTestPush() {
     if (!currentUser) return;
     setTestingPush(true);
     setPushError(null);
     setTestSent(false);
     try {
-      await sendPushToUser(
-        currentUser.id,
-        'Test notification',
-        'Push notifications are working on this device 🎉',
-      );
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        setPushError('No active push subscription on this device. Try disabling and re-enabling push.');
+        setTestingPush(false);
+        return;
+      }
+      const res = await fetch('/api/send-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          title: 'Test notification',
+          body: 'Push notifications are working on this device 🎉',
+        }),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(msg || `Server responded ${res.status}`);
+      }
       setTestSent(true);
       setTimeout(() => setTestSent(false), 4000);
     } catch (err) {
