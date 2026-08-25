@@ -5,6 +5,33 @@ import { useAuth } from '../context/AuthContext';
 import { iqd } from '../lib/finHelpers';
 import { ensureProjectsLoaded, getProjectNames } from '../lib/projectsCache';
 import { BRAND } from '../config/brand';
+import type { PurchaseOrder, CompanySettings, BankAccount, PaymentMethod } from '../lib/invoiceTypes';
+import {
+  previouslyInvoicedForRevenue,
+  remainingSiteValue,
+  siteBillingStatus,
+  billedCommercialValueForPO,
+  remainingPOValue,
+  invoiceSubtotal as calcInvoiceSubtotal,
+  invoiceTotal as calcInvoiceTotal,
+  outstanding as calcOutstanding,
+} from '../lib/invoiceCalc';
+import {
+  buildInvoiceHTML,
+  type InvoicePrintModel,
+  type InvoicePrintLineItem,
+} from '../lib/invoicePrintTemplate';
+// Phase 4.8 — deterministic client-side PDF export via @react-pdf/renderer.
+// Lives alongside the existing browser Print action; both consume the
+// same `InvoicePrintModel`. The generator lazy-imports @react-pdf/renderer
+// on first click so its ~1MB pdfkit bundle stays out of the main chunk.
+import { generateInvoicePdf } from '../pdf/generateInvoicePdf';
+// Gold logo — Phase 4 print/detail branding. App-wide chrome (Sidebar,
+// Topbar, Login) stays on BRAND.logoLight (= jsr-logo.png) via
+// src/config/brand.ts. The two assets are byte-identical today, so this
+// import path is purely a namespacing decision that makes a later
+// asset-only swap a no-op — no code change needed to re-skin.
+import goldLogo from '../assets/jsr-communications-gold.png';
 import css from './FinBilling.module.css';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -17,6 +44,10 @@ interface Client {
   address: string | null;
 }
 
+// Invoice shape extended with Phase 2 upgrade fields
+// (mirrors InvoiceUpgradeFields from invoiceTypes.ts — kept inline so
+// the local interface remains the single reference used across this
+// page's state, without a spread-typed intermediate).
 interface Invoice {
   id: string;
   invoice_number: string | null;
@@ -29,6 +60,11 @@ interface Invoice {
   amount_received: number;
   notes: string | null;
   created_by: string | null;
+  po_id: string | null;
+  milestone_label: string | null;
+  milestone_percent: number | null;
+  discount_amount: number;
+  tax_amount: number;
 }
 
 interface InvoiceItem {
@@ -41,6 +77,15 @@ interface InvoiceItem {
   revenue_id: string | null;
 }
 
+// Compact history row — the only invoice_items columns we need for the
+// cumulative Site / PO validation maps. Selecting narrower keeps the
+// bulk fetch light.
+interface InvoiceItemHistoryRow {
+  invoice_id: string;
+  revenue_id: string | null;
+  amount: number;
+}
+
 interface Payment {
   id: string;
   invoice_id: string;
@@ -49,8 +94,16 @@ interface Payment {
   reference: string | null;
   notes: string | null;
   recorded_by: string | null;
+  // Phase 2 columns from invoice_payments — free-text at DB level, the
+  // UI narrows method to PaymentMethod. bank_account_id records WHERE
+  // the payment was received; the invoice's REQUESTED destination
+  // account for print is picked from company defaults (see selectBank).
+  method: PaymentMethod;
+  bank_account_id: string | null;
 }
 
+// Revenue row extended with po_id from Phase 2. status is nullable at
+// the DB level.
 interface RevRow {
   id: string;
   project_name: string | null;
@@ -58,8 +111,12 @@ interface RevRow {
   site_id: string | null;
   amount: number | null;
   status: string | null;
+  po_id: string | null;
 }
 
+// Persisted line-item shape + transient UX-only fields used while
+// building the invoice. Fields prefixed with `_` are UI-only and are
+// NEVER written to invoice_items (see saveInvoice payload).
 interface LineItem {
   site_id: string | null;
   section_name: string | null;
@@ -67,6 +124,10 @@ interface LineItem {
   amount: number;
   revenue_id: string | null;
   _customId?: number;
+  _commercialValue?: number;    // revenue.amount for this site
+  _previouslyInvoiced?: number; // SUM of other invoices' items for this revenue_id
+  _remainingBefore?: number;    // clamp(commercial - previouslyInvoiced, 0)
+  _invoicePercent?: number;     // per-line percent bound to amount for display
 }
 
 // ── Status helpers ────────────────────────────────────────────
@@ -81,86 +142,168 @@ const STATUS_PILL_ACTIVE: Record<string, string> = {
 };
 
 // ── Print helper ──────────────────────────────────────────────
-function printInvoice(inv: Invoice, client: Client | undefined, items: InvoiceItem[], payments: Payment[]) {
-  const outstanding = (+inv.total_amount || 0) - (+inv.amount_received || 0);
-  const statusColor = STATUS_TEXT[inv.status] || '#475569';
-  const statusBg    = STATUS_COLOR[inv.status] || '#f1f5f9';
-  const fmt = (v: number | null | undefined) => (+(v ?? 0)).toLocaleString('en-IQ') + ' IQD';
-  const e   = (s: string | null | undefined) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const itemsRows = items.length === 0
-    ? '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:16px">No line items.</td></tr>'
-    : items.map((item, i) => `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'}">
-        <td>${e(item.section_name)}</td>
-        <td style="font-weight:600">${e(String(item.site_id || '—'))}</td>
-        <td style="color:#64748b">${e(item.description)}</td>
-        <td style="text-align:right;font-weight:700">${fmt(item.amount)}</td>
-      </tr>`).join('');
-  const payRows = payments.length === 0
-    ? '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:12px">No payments recorded.</td></tr>'
-    : payments.map(p => `<tr>
-        <td>${e(p.payment_date)}</td>
-        <td style="font-weight:700;color:#16a34a">${fmt(p.amount)}</td>
-        <td style="color:#64748b">${e(p.reference || '')}${p.notes ? ' · ' + e(p.notes) : ''}</td>
-      </tr>`).join('');
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-  <title>Invoice ${e(inv.invoice_number)}</title>
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size:13px; color:#1e293b; background:#fff; padding:32px; }
-    @media print { body { padding:16px; } @page { margin:12mm; } }
-    .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; padding-bottom:20px; border-bottom:2px solid #e2e8f0; }
-    .brand { font-size:22px; font-weight:900; color:#2563eb; letter-spacing:-0.5px; }
-    .brand-sub { font-size:11px; color:#94a3b8; margin-top:2px; }
-    .inv-meta { text-align:right; }
-    .inv-number { font-size:20px; font-weight:800; color:#1e293b; }
-    .status-badge { display:inline-block; padding:2px 12px; border-radius:20px; font-size:11px; font-weight:700; margin-top:4px; background:${statusBg}; color:${statusColor}; }
-    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:28px; }
-    .info-box h4 { font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px; }
-    .info-box p { font-size:13px; color:#334155; line-height:1.6; }
-    .info-box strong { color:#1e293b; font-weight:700; }
-    table { width:100%; border-collapse:collapse; margin-bottom:24px; }
-    th { background:#f1f5f9; font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:.5px; padding:8px 12px; text-align:left; border-bottom:1px solid #e2e8f0; }
-    td { padding:9px 12px; border-bottom:1px solid #f1f5f9; color:#334155; }
-    .section-title { font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.6px; margin-bottom:8px; margin-top:20px; }
-    .totals-box { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px 20px; display:flex; justify-content:space-between; align-items:center; margin-top:8px; }
-    .tot-item { text-align:center; }
-    .tot-label { font-size:11px; color:#94a3b8; margin-bottom:3px; text-transform:uppercase; letter-spacing:.5px; }
-    .tot-value { font-size:16px; font-weight:800; }
-    .notes { margin-top:24px; font-size:12px; color:#64748b; font-style:italic; border-top:1px solid #e2e8f0; padding-top:12px; }
-    .footer { margin-top:36px; padding-top:14px; border-top:1px solid #e2e8f0; font-size:11px; color:#94a3b8; text-align:center; }
-  </style></head><body>
-  <div class="header">
-    <div><div class="brand">${e(BRAND.appName)}</div><div class="brand-sub">Telecom Infrastructure Management</div></div>
-    <div class="inv-meta">
-      <div class="inv-number">${e(inv.invoice_number)}</div>
-      <div class="status-badge">${e(inv.status || 'Draft')}</div>
-    </div>
-  </div>
-  <div class="grid-2">
-    <div class="info-box">
-      <h4>Bill To</h4>
-      <p><strong>${e(client?.company_name)}</strong>${client?.contact_person ? '<br>' + e(client.contact_person) : ''}${client?.email ? '<br>' + e(client.email) : ''}${client?.phone ? '<br>' + e(client.phone) : ''}${client?.address ? '<br>' + e(client.address) : ''}</p>
-    </div>
-    <div class="info-box" style="text-align:right">
-      <h4>Invoice Details</h4>
-      <p>Project: <strong>${e(inv.project_name)}</strong><br>Issue Date: <strong>${e(inv.issue_date)}</strong><br>Due Date: <strong>${e(inv.due_date)}</strong></p>
-    </div>
-  </div>
-  <div class="section-title">Line Items</div>
-  <table><thead><tr><th>Section</th><th>Site ID</th><th>Description</th><th style="text-align:right">Amount</th></tr></thead><tbody>${itemsRows}</tbody></table>
-  <div class="section-title">Payment History</div>
-  <table><thead><tr><th>Date</th><th>Amount</th><th>Reference / Notes</th></tr></thead><tbody>${payRows}</tbody></table>
-  <div class="totals-box">
-    <div class="tot-item"><div class="tot-label">Total Invoiced</div><div class="tot-value" style="color:#1e293b">${fmt(inv.total_amount)}</div></div>
-    <div class="tot-item"><div class="tot-label">Received</div><div class="tot-value" style="color:#16a34a">${fmt(inv.amount_received)}</div></div>
-    <div class="tot-item"><div class="tot-label">Outstanding</div><div class="tot-value" style="color:${outstanding > 0 ? '#dc2626' : '#16a34a'}">${fmt(outstanding)}</div></div>
-  </div>
-  ${inv.notes ? `<div class="notes">Notes: ${e(inv.notes)}</div>` : ''}
-  <div class="footer">Generated by ${e(BRAND.appName)} &nbsp;·&nbsp; ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-  <script>window.onload = function(){ window.print(); }<\/script>
-  </body></html>`;
+//
+// Phase 4: the HTML/CSS lives in src/lib/invoicePrintTemplate.ts as a
+// pure `buildInvoiceHTML(model)` function. This wrapper composes the
+// `InvoicePrintModel` from already-loaded page data (invoice + items +
+// payments + PO + company_settings + bank_accounts + itemHistory) using
+// the invoiceCalc.ts helpers — NO business math is duplicated here or
+// in the template.
+//
+// Popup architecture is unchanged: window.open + document.write +
+// document.close. The template embeds a self-contained script that
+// waits for every <img> to fire load/error before calling
+// window.print(), so the pre-Phase-4 blank-logo race is fixed at the
+// template level, not by delaying anything in this wrapper.
+
+// Pick the bank account we display on the invoice for a given
+// currency. Rule per spec §14/K:
+//   1. is_active=true AND is_default=true for that currency, OR
+//   2. first is_active=true for that currency (sort_order applied by
+//      the caller's initial fetch),
+//   3. otherwise null → template gracefully hides Bank Details.
+// No hard-coded fallback. The invoice_payments.bank_account_id column
+// records where money WAS received; we deliberately do NOT read from it
+// to decide where to REQUEST payment — those are two different concerns.
+function selectBank(banks: BankAccount[], currency: string): BankAccount | null {
+  const cur = (currency || 'IQD').toUpperCase();
+  const active = banks.filter(b => b.is_active && (b.currency || '').toUpperCase() === cur);
+  const def = active.find(b => b.is_default);
+  return def || active[0] || null;
+}
+
+// Compose the print model. All numeric derivations use invoiceCalc.ts
+// helpers so validation, live modal figures, and print stay in lock-step.
+function buildPrintModel(
+  inv: Invoice,
+  client: Client | undefined,
+  items: InvoiceItem[],
+  payments: Payment[],
+  po: PurchaseOrder | null,
+  company: CompanySettings | null,
+  bank: BankAccount | null,
+  itemHistory: InvoiceItemHistoryRow[],
+  invoicePoMap: Map<string, string | null>,
+  revenueRows: RevRow[],
+): InvoicePrintModel {
+  // Currency: derive from PO if available, otherwise 'IQD' (there's no
+  // invoices.currency column yet — a later phase can promote this).
+  const currency = (po?.currency || 'IQD').toUpperCase();
+
+  // Financial summary (recomputed — never read the cached
+  // amount_received, per Payment Status spec).
+  const subtotal        = calcInvoiceSubtotal(items);
+  const total           = +inv.total_amount || 0;              // stored as subtotal − discount + tax
+  const receivedToDate  = payments.reduce((s, p) => s + (+p.amount || 0), 0);
+  const outstanding     = calcOutstanding(total, receivedToDate);
+
+  // Commercial subtotal for PO progress — revenue-linked lines only.
+  // Custom items (revenue_id === null) are NOT commercial value.
+  const revItems        = items.filter(it => it.revenue_id);
+  const commercialSub   = revItems.reduce((s, it) => s + (+it.amount || 0), 0);
+
+  // PO progress figures. `po_previously_billed` excludes THIS invoice
+  // so the "Total Billed to Date" reads as (prev) + (this).
+  const poId            = po?.id || '';
+  const poAmount        = +(po?.po_amount || 0);
+  const poPrev          = po ? billedCommercialValueForPO(itemHistory, invoicePoMap, poId, inv.id) : 0;
+  const poTotalToDate   = poPrev + commercialSub;
+  const poRemaining     = po ? remainingPOValue(poAmount, poTotalToDate) : 0;
+
+  // Line items — enrich with per-row derivations.
+  const printItems: InvoicePrintLineItem[] = items.map(it => {
+    const rev = it.revenue_id ? revenueRows.find(r => r.id === it.revenue_id) : undefined;
+    if (!rev) {
+      // Custom line — no commercial context. Print engine renders
+      // dashes for empty columns (spec: "graceful degradation").
+      return {
+        section_name:         it.section_name,
+        site_id:              it.site_id,
+        description:          it.description,
+        po_number:            '',
+        site_commercial:      null,
+        previously_invoiced:  null,
+        this_invoice:         +(it.amount || 0),
+        remaining_after:      null,
+      };
+    }
+    const commercial   = +(rev.amount || 0);
+    const prev         = previouslyInvoicedForRevenue(itemHistory, rev.id, inv.id);
+    const thisAmt      = +(it.amount || 0);
+    const remainAfter  = commercial - prev - thisAmt;   // raw — may be negative on legacy over-bill
+    const linePOId     = rev.po_id;
+    const linePONum    = linePOId
+      ? (po && po.id === linePOId ? po.po_number : '')
+      : '';
+    return {
+      section_name:         it.section_name,
+      site_id:              it.site_id,
+      description:          it.description,
+      po_number:            linePONum,
+      site_commercial:      commercial,
+      previously_invoiced:  prev,
+      this_invoice:         thisAmt,
+      remaining_after:      remainAfter,
+    };
+  });
+
+  // Bank payment reference. If exactly one revenue-linked line, use
+  // Site ID; otherwise use project name.
+  const singleRevLine = revItems.length === 1 ? revItems[0] : null;
+  const refTail       = singleRevLine?.site_id
+    ? 'Site ' + String(singleRevLine.site_id)
+    : (inv.project_name || '');
+  const paymentReference = [inv.invoice_number || '', refTail].filter(Boolean).join(' / ');
+
+  return {
+    invoice_number:              inv.invoice_number,
+    status:                      inv.status,
+    issue_date:                  inv.issue_date,
+    due_date:                    inv.due_date,
+    project_name:                inv.project_name,
+    currency,
+    milestone_label:             inv.milestone_label,
+    milestone_percent:           inv.milestone_percent,
+    notes:                       inv.notes,
+    client:                      client
+      ? { company_name: client.company_name, contact_person: client.contact_person, email: client.email, phone: client.phone, address: client.address }
+      : null,
+    po,
+    company,
+    bank,
+    items:                       printItems,
+    payments:                    payments.map(p => ({
+      payment_date: p.payment_date,
+      amount:       +(p.amount || 0),
+      method:       p.method,
+      reference:    p.reference,
+      notes:        p.notes,
+      recorded_by:  p.recorded_by,
+    })),
+    received_to_date:            receivedToDate,
+    subtotal,
+    discount:                    +(inv.discount_amount || 0),
+    tax:                         +(inv.tax_amount      || 0),
+    total,
+    outstanding,
+    po_previously_billed:        poPrev,
+    po_this_invoice_commercial:  commercialSub,
+    po_total_billed_to_date:     poTotalToDate,
+    po_remaining_to_invoice:     poRemaining,
+    logo_url:                    goldLogo,
+    bank_payment_reference:      paymentReference,
+    generated_at:                new Date().toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    }),
+  };
+}
+
+function printInvoice(model: InvoicePrintModel) {
+  const html = buildInvoiceHTML(model);
   const w = window.open('', '_blank');
-  if (w) { w.document.write(html); w.document.close(); }
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
 }
 
 // ── Component ─────────────────────────────────────────────────
@@ -174,23 +317,69 @@ export default function FinInvoices() {
   const [payments,     setPayments]     = useState<Payment[]>([]);
   const [items,        setItems]        = useState<InvoiceItem[]>([]);
   const [revenue,      setRevenue]      = useState<RevRow[]>([]);
-  const [invoicedIds,  setInvoicedIds]  = useState<Set<string>>(new Set());
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  // Phase 4: bulk-load company_settings (one row) + active bank_accounts
+  // so print/detail composition never triggers additional per-render
+  // queries. Both feed into buildPrintModel and the Detail modal's
+  // Bank Details card. If the migration hasn't been applied yet, both
+  // fetches gracefully return no rows and the template hides those
+  // sections — no crash, no missing-column error surfaced to users.
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
+  const [bankAccounts,    setBankAccounts]    = useState<BankAccount[]>([]);
+  // Bulk invoice_items history — one fetch, aggregated client-side into
+  // the maps below. Replaces the old `invoicedIds` Set (which only knew
+  // "is this revenue_id invoiced at all"). Cumulative validation needs
+  // sums, not booleans.
+  const [itemHistory,  setItemHistory]  = useState<InvoiceItemHistoryRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
 
   // ── Invoice modal ─────────────────────────────────────────
   const [invModal,     setInvModal]     = useState(false);
   const [invEditId,    setInvEditId]    = useState<string | null>(null);
-  const [invForm,      setInvForm]      = useState({ clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '' });
+  const [invForm,      setInvForm]      = useState({
+    clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
+    poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
+  });
   const [revSites,     setRevSites]     = useState<RevRow[]>([]);
-  const [pickerIds,    setPickerIds]    = useState<Set<string>>(new Set()); // invoiced IDs to exclude in picker
+  // Site classification sets — populated by loadPickerForProject via
+  // siteBillingStatus(). Three states, two sets: 'available' is the
+  // implicit default (not present in either set). Rows in either set
+  // render disabled checkboxes with a status-specific badge.
+  //   • fullyBilledIds  → "Fully Invoiced" (blue/grey)
+  //   • missingValueIds → "Commercial Value Missing" (amber)
+  const [fullyBilledIds,  setFullyBilledIds]  = useState<Set<string>>(new Set());
+  const [missingValueIds, setMissingValueIds] = useState<Set<string>>(new Set());
   const [checkedRevs,  setCheckedRevs]  = useState<Set<string>>(new Set()); // currently-checked revenue IDs
+  // Per-row spinner while an "Assign to PO" write is in-flight. Prevents
+  // double-clicks from firing two UPDATEs. Cleared on success or error.
+  const [assigningRevIds, setAssigningRevIds] = useState<Set<string>>(new Set());
+  // Persistent, dismissable error banner for PO-assignment failures. A
+  // 3.5s toast disappears too quickly to diagnose a real RLS/PostgREST
+  // failure — this stays until the user dismisses it or the next assign
+  // attempt succeeds.
+  const [assignError, setAssignError] = useState<string | null>(null);
+  // Persistent, dismissable info banner for Apply % edge cases (no
+  // percentage / no selected sites / out-of-range). Separate from
+  // invErr so it doesn't interfere with save-time validation.
+  const [applyPctMsg, setApplyPctMsg] = useState<string | null>(null);
+  // Overallocation confirm — mirrors FinPOs.tsx `overallocConfirm` state.
+  // `revIds` is the list about to be assigned (single or bulk); `projected`
+  // is the mapped total AFTER assignment; `poAmount` is the PO cap.
+  const [overallocConfirm, setOverallocConfirm] = useState<
+    { revIds: string[]; projected: number; poAmount: number; poNumber: string } | null
+  >(null);
   const [customItems,  setCustomItems]  = useState<LineItem[]>([]);
   const [pickerLoad,   setPickerLoad]   = useState(false);
   const [pickerStatus, setPickerStatus] = useState('Select a project first');
   const [showCustForm, setShowCustForm] = useState(false);
   const [custForm,     setCustForm]     = useState({ site: '', desc: '', amt: '' });
   const [invErr,       setInvErr]       = useState('');
+  // Per-line overrides for the "Invoice %" and "This Invoice Amount"
+  // inputs in the line-item block. Keyed by revenue_id (for picker
+  // rows) or custom _customId (for extras). Amount override wins over
+  // the auto-computed value from percentage.
+  const [lineAmountOverride, setLineAmountOverride] = useState<Record<string, number>>({});
 
   // ── Payment modal ─────────────────────────────────────────
   const [payModal,    setPayModal]    = useState(false);
@@ -207,6 +396,27 @@ export default function FinInvoices() {
   // ── Toast ─────────────────────────────────────────────────
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Phase 4.8 — per-invoice busy set for the deterministic PDF export.
+  // Prevents double-click re-entry per row and lets the row / modal
+  // button swap its label to "Generating…" while pdfkit is running. The
+  // detail-modal button also participates via `detailInv?.id`. Cleared
+  // in a `finally` so a thrown error never leaves the button disabled.
+  const [pdfBusy, setPdfBusy] = useState<Set<string>>(new Set());
+  const isPdfBusy = (id: string) => pdfBusy.has(id);
+  async function runPdfExport(id: string, model: InvoicePrintModel) {
+    setPdfBusy(prev => { const next = new Set(prev); next.add(id); return next; });
+    try {
+      await generateInvoicePdf(model);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('pdf: generation failed', err);
+      showToast('PDF generation failed: ' + msg, false);
+    } finally {
+      setPdfBusy(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  }
+
   const [FIN_PROJECTS, setFinProjects] = useState<string[]>([]);
 
   useEffect(() => {
@@ -224,19 +434,24 @@ export default function FinInvoices() {
   // ── Load ──────────────────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
-    const [cl, inv, pym, itm, rev] = await Promise.all([
+    // Single bulk fetch of invoice_items (all rows) — used both as the
+    // per-invoice detail source and as the history feed for cumulative
+    // Site / PO validation. No per-site sub-query.
+    const [cl, inv, pym, itm, rev, po, cs, ba] = await Promise.all([
       supabase.from('clients').select('*').order('company_name'),
       supabase.from('invoices').select('*').order('created_at', { ascending: false }),
       supabase.from('invoice_payments').select('*'),
       supabase.from('invoice_items').select('*'),
       supabase.from('revenue').select('*').order('project_name').order('section_name').order('site_id'),
+      supabase.from('purchase_orders').select('*').order('created_at', { ascending: false }),
+      // Phase 4: company profile + active banks — single row and small
+      // table respectively. Errors are tolerated (RLS or unmigrated
+      // env) — print template just hides those sections.
+      supabase.from('company_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('bank_accounts').select('*').eq('is_active', true).order('sort_order').order('bank_name'),
     ]);
     const invList: Invoice[] = inv.data || [];
     const itmList: InvoiceItem[] = itm.data || [];
-
-    // Rebuild invoiced IDs set
-    const { data: idRows } = await supabase.from('invoice_items').select('revenue_id').not('revenue_id', 'is', null);
-    const newInvoicedIds = new Set<string>((idRows || []).map((x: { revenue_id: string }) => x.revenue_id).filter(Boolean));
 
     // Auto-overdue: find invoices with past due_date, not Paid/Overdue, amount_received < total
     const overdueToUpdate = invList.filter(i =>
@@ -254,8 +469,19 @@ export default function FinInvoices() {
     setInvoices(invList);
     setPayments(pym.data || []);
     setItems(itmList);
-    setRevenue(rev.data || []);
-    setInvoicedIds(newInvoicedIds);
+    setRevenue((rev.data || []) as RevRow[]);
+    setPurchaseOrders((po.data || []) as PurchaseOrder[]);
+    setCompanySettings((cs.data as CompanySettings | null) || null);
+    setBankAccounts((ba.data || []) as BankAccount[]);
+    // History rows for cumulative validation. Filtered to shape the
+    // helpers expect (invoice_id + amount always present; revenue_id
+    // may be null for custom items — which is fine because
+    // previouslyInvoicedForRevenue only sums matches).
+    setItemHistory(itmList.map(x => ({
+      invoice_id: x.invoice_id,
+      revenue_id: x.revenue_id,
+      amount: +(x.amount || 0),
+    })));
     setLoading(false);
   }, [today]);
 
@@ -267,18 +493,64 @@ export default function FinInvoices() {
   const totalOutstanding = totalInvoiced - totalReceived;
   const overdueCount     = invoices.filter(r => r.status === 'Overdue').length;
 
-  // Revenue line items from checked boxes
+  // invoiceId → po_id map for PO-level cumulative billing lookups.
+  // Rebuilt from `invoices` state so it stays in sync after edits.
+  const invoicePoMap = new Map<string, string | null>(
+    invoices.map(i => [i.id, i.po_id ?? null] as const)
+  );
+
+  // Selected PO (if any) for the currently open modal.
+  const selectedPO = invForm.poId ? purchaseOrders.find(p => p.id === invForm.poId) : undefined;
+
+  // Discount / tax coerced to numbers for live-summary math. Nulls,
+  // blanks, and NaN all collapse to 0.
+  const discountNum = Math.max(0, +invForm.discount || 0);
+  const taxNum      = Math.max(0, +invForm.tax || 0);
+  const milestonePct = +invForm.milestonePercent || 0;
+
+  // Revenue line items from checked boxes — with transient UX fields
+  // populated for the line-item table (previouslyInvoiced, remainingBefore,
+  // invoicePercent). Amount is override-first, then milestone-derived,
+  // then commercial value.
   const revenueLineItems: LineItem[] = revSites
     .filter(r => checkedRevs.has(r.id))
-    .map(r => ({
-      site_id: r.site_id,
-      section_name: r.section_name || '',
-      description: `Site implementation — ${r.site_id}`,
-      amount: +(r.amount || 0),
-      revenue_id: r.id,
-    }));
+    .map(r => {
+      const commercial = +(r.amount || 0);
+      const prevInv = previouslyInvoicedForRevenue(itemHistory, r.id, invEditId);
+      const remainingBefore = remainingSiteValue(commercial, prevInv);
+      const override = lineAmountOverride[r.id];
+      // Milestone default: MIN(commercial × pct / 100, remainingBefore).
+      // No override + no milestone → default to remainingBefore (the
+      // user's most likely intent: "bill what's left"). That preserves
+      // the pre-Phase-3B behavior when the site has never been invoiced
+      // (remainingBefore === commercial).
+      let amt: number;
+      if (override !== undefined) {
+        amt = override;
+      } else if (milestonePct > 0) {
+        amt = Math.min(commercial * milestonePct / 100, remainingBefore);
+      } else {
+        amt = remainingBefore;
+      }
+      const pct = commercial > 0 ? (amt / commercial) * 100 : 0;
+      return {
+        site_id: r.site_id,
+        section_name: r.section_name || '',
+        description: `Site implementation — ${r.site_id}`,
+        amount: amt,
+        revenue_id: r.id,
+        _commercialValue: commercial,
+        _previouslyInvoiced: prevInv,
+        _remainingBefore: remainingBefore,
+        _invoicePercent: pct,
+      };
+    });
   const allLineItems: LineItem[] = [...revenueLineItems, ...customItems];
-  const invTotal = allLineItems.reduce((s, i) => s + (+(i.amount || 0)), 0);
+  const invSubtotal = calcInvoiceSubtotal(allLineItems);
+  const invTotal    = calcInvoiceTotal(invSubtotal, discountNum, taxNum);
+  // Commercial subtotal — only revenue-linked lines count against a PO.
+  // Custom items are NOT commercial value for PO consumption.
+  const commercialSubtotal = calcInvoiceSubtotal(revenueLineItems);
 
   // Revenue picker grouped by section
   const revSections: Record<string, RevRow[]> = {};
@@ -288,21 +560,43 @@ export default function FinInvoices() {
     revSections[sec].push(r);
   });
 
-  // Pending invoice revenue
-  const pendingRevenue = revenue.filter(r => !invoicedIds.has(r.id));
-  const pendingByProj: Record<string, RevRow[]> = {};
-  pendingRevenue.forEach(r => {
-    const p = r.project_name || 'Unknown';
+  // Pending invoice revenue — cumulative view: a site stays "pending"
+  // while its remaining commercial value is > 0. Replaces the old
+  // "any invoice_item referenced it" boolean exclusion, so partially
+  // billed sites now show up here (with the still-billable balance).
+  const pendingRevenue = revenue
+    .map(r => {
+      const prev = previouslyInvoicedForRevenue(itemHistory, r.id, null);
+      const remaining = remainingSiteValue(+(r.amount || 0), prev);
+      return { r, remaining };
+    })
+    .filter(x => x.remaining > 0);
+  const pendingByProj: Record<string, Array<{ r: RevRow; remaining: number }>> = {};
+  pendingRevenue.forEach(x => {
+    const p = x.r.project_name || 'Unknown';
     if (!pendingByProj[p]) pendingByProj[p] = [];
-    pendingByProj[p].push(r);
+    pendingByProj[p].push(x);
   });
-  const pendingTotal = pendingRevenue.reduce((s, r) => s + (+(r.amount || 0)), 0);
+  const pendingTotal = pendingRevenue.reduce((s, x) => s + x.remaining, 0);
 
   // ── Load revenue picker for a project ────────────────────
-  async function loadPickerForProject(project: string, editId: string | null, autoSelectAll = false) {
+  //
+  // Loads ALL revenue rows for the project (no PO filter here — the picker
+  // splits by po_id inside the render into Section A / B / C so newly-
+  // created POs with zero mapped sites don't produce an empty picker).
+  // Classification is delegated to siteBillingStatus() so a zero-value
+  // site renders "Commercial Value Missing" rather than being silently
+  // labelled "Fully Invoiced".
+  async function loadPickerForProject(
+    project: string,
+    editId: string | null,
+    autoSelectAll = false,
+    poId: string | null = null,
+  ) {
     if (!project) {
       setRevSites([]);
-      setPickerIds(new Set());
+      setFullyBilledIds(new Set());
+      setMissingValueIds(new Set());
       setCheckedRevs(new Set());
       setPickerStatus('Select a project first');
       return;
@@ -310,38 +604,153 @@ export default function FinInvoices() {
     setPickerLoad(true);
     setPickerStatus('Loading sites…');
     const { data } = await supabase.from('revenue').select('*').eq('project_name', project).order('section_name').order('site_id');
-    const sites: RevRow[] = data || [];
+    const sites: RevRow[] = (data || []) as RevRow[];
     setRevSites(sites);
 
-    // Fetch all invoiced revenue_ids
-    const { data: existingItems } = await supabase.from('invoice_items').select('revenue_id').not('revenue_id', 'is', null);
-    const invoicedSet = new Set<string>((existingItems || []).map((x: { revenue_id: string }) => x.revenue_id).filter(Boolean));
-
-    // If editing, exclude current invoice's items so they remain selectable
-    if (editId) {
-      const { data: curItems } = await supabase.from('invoice_items').select('revenue_id').eq('invoice_id', editId);
-      (curItems || []).forEach((x: { revenue_id: string | null }) => { if (x.revenue_id) invoicedSet.delete(x.revenue_id); });
+    // Classify every row (siteBillingStatus is pure — no extra queries).
+    // When editing, the current invoice's own history is excluded so the
+    // rows it already claims stay selectable.
+    const fullyBilled  = new Set<string>();
+    const missingValue = new Set<string>();
+    for (const r of sites) {
+      const prev = previouslyInvoicedForRevenue(itemHistory, r.id, editId);
+      const st = siteBillingStatus(r.amount, prev);
+      if (st === 'fully_invoiced')   fullyBilled.add(r.id);
+      else if (st === 'missing_value') missingValue.add(r.id);
     }
+    setFullyBilledIds(fullyBilled);
+    setMissingValueIds(missingValue);
 
-    setPickerIds(invoicedSet);
-    const available  = sites.filter(r => !invoicedSet.has(r.id)).length;
-    const alreadyDone = sites.length - available;
-    setPickerStatus(`${available} available${alreadyDone > 0 ? ` · ${alreadyDone} already invoiced` : ''}`);
+    // Picker status string — scoped to the PO's Section A when a PO is
+    // bound, otherwise the full project (backward-compat legacy flow).
+    let statusMsg: string;
+    if (poId) {
+      const inScope = sites.filter(r => r.po_id === poId);
+      const available = inScope.filter(r => !fullyBilled.has(r.id) && !missingValue.has(r.id)).length;
+      const done      = inScope.filter(r => fullyBilled.has(r.id)).length;
+      const missing   = inScope.filter(r => missingValue.has(r.id)).length;
+      const parts = [`${available} available in PO`];
+      if (done > 0)    parts.push(`${done} fully invoiced`);
+      if (missing > 0) parts.push(`${missing} missing value`);
+      statusMsg = parts.join(' · ');
+    } else {
+      const available = sites.length - fullyBilled.size - missingValue.size;
+      const parts = [`${available} available`];
+      if (fullyBilled.size  > 0) parts.push(`${fullyBilled.size} fully invoiced`);
+      if (missingValue.size > 0) parts.push(`${missingValue.size} missing value`);
+      statusMsg = parts.join(' · ');
+    }
+    setPickerStatus(statusMsg);
     setPickerLoad(false);
 
     if (autoSelectAll) {
-      setCheckedRevs(new Set(sites.filter(r => !invoicedSet.has(r.id)).map(r => r.id)));
+      const inScope = poId ? sites.filter(r => r.po_id === poId) : sites;
+      setCheckedRevs(new Set(
+        inScope
+          .filter(r => !fullyBilled.has(r.id) && !missingValue.has(r.id))
+          .map(r => r.id),
+      ));
     }
   }
 
+  // ── Assign a Site (or bulk) to the selected PO ────────────────
+  //
+  // Mirrors the assignment guard in src/pages/FinPOs.tsx `tryAssign`. If
+  // the projected mapped total after the write would exceed po_amount,
+  // surface the same over-allocation modal (default Cancel, destructive
+  // "Assign anyway"). On success, patches BOTH `revenue` state (so PO
+  // summary math re-flows) AND `revSites` state (so the row moves from
+  // Section B into Section A without a modal close/reopen). Does NOT
+  // toggle the checkbox — the user still has to check it explicitly in
+  // Section A before it becomes part of the invoice.
+  async function commitAssignRevIds(revIds: string[], poId: string) {
+    if (revIds.length === 0) return;
+    setAssigningRevIds(prev => {
+      const next = new Set(prev);
+      revIds.forEach(id => next.add(id));
+      return next;
+    });
+    try {
+      const { data, error } = await supabase
+        .from('revenue')
+        .update({ po_id: poId })
+        .in('id', revIds)
+        .select('id, po_id');
+      if (error) {
+        console.error('assign: supabase update failed', error);
+        setAssignError(`Could not assign to PO: ${error.message || 'unknown error'} (code ${error.code || '—'}). Check console for details.`);
+        showToast(`Assign failed: ${error.message || 'unknown error'}`, false);
+        return;
+      }
+      if (!data || data.length === 0) {
+        // Update returned no rows — likely RLS silently filtered the row
+        // out. Surface it rather than pretend the assign succeeded.
+        const msg = 'Assign returned 0 rows updated — likely blocked by row-level security. Check permissions.';
+        console.error('assign: zero rows updated');
+        setAssignError(msg);
+        showToast(msg, false);
+        return;
+      }
+      setAssignError(null);
+      setRevenue(list => list.map(r => revIds.includes(r.id) ? { ...r, po_id: poId } : r));
+      setRevSites(list => list.map(r => revIds.includes(r.id) ? { ...r, po_id: poId } : r));
+      showToast(revIds.length === 1 ? 'Site assigned to PO.' : `${revIds.length} sites assigned to PO.`, true);
+    } catch (e: unknown) {
+      const msg = (e as Error).message || 'Assignment failed.';
+      console.error('assign: unexpected exception', e);
+      setAssignError(msg);
+      showToast(msg, false);
+    } finally {
+      setAssigningRevIds(prev => {
+        const next = new Set(prev);
+        revIds.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+  }
+
+  function tryAssignRevIds(revIds: string[]) {
+    if (!selectedPO || revIds.length === 0) return;
+    const poAmount = +(selectedPO.po_amount || 0);
+    const currentMapped = revenue
+      .filter(r => r.po_id === selectedPO.id)
+      .reduce((s, r) => s + (+(r.amount || 0)), 0);
+    const addition = revenue
+      .filter(r => revIds.includes(r.id))
+      .reduce((s, r) => s + (+(r.amount || 0)), 0);
+    const projected = currentMapped + addition;
+    if (poAmount > 0 && projected > poAmount) {
+      setOverallocConfirm({ revIds, projected, poAmount, poNumber: selectedPO.po_number });
+      return;
+    }
+    commitAssignRevIds(revIds, selectedPO.id);
+  }
+
+  function confirmOverallocAssign() {
+    if (!overallocConfirm || !selectedPO) return;
+    const ids = overallocConfirm.revIds;
+    setOverallocConfirm(null);
+    commitAssignRevIds(ids, selectedPO.id);
+  }
+
   // ── Toggle section checkbox ───────────────────────────────
+  // Only toggles rows whose po_id matches the currently selected PO
+  // (Section A). Rows in Section B ("Available Project Sites") and
+  // Section C ("Assigned to Another PO") are never bulk-toggled — they
+  // require an explicit assignment step first. Missing-value and
+  // fully-billed rows are also skipped regardless of PO.
   function toggleSection(secName: string, checked: boolean) {
     setCheckedRevs(prev => {
       const next = new Set(prev);
+      const selectedPoId = invForm.poId || null;
       revSites.forEach(r => {
-        if ((r.section_name || 'No Section') === secName && !pickerIds.has(r.id)) {
-          if (checked) next.add(r.id); else next.delete(r.id);
-        }
+        if ((r.section_name || 'No Section') !== secName) return;
+        if (fullyBilledIds.has(r.id) || missingValueIds.has(r.id)) return;
+        // Only rows already linked to the selected PO (or, in the legacy
+        // non-PO flow, any project row) are togglable by the section
+        // checkbox. Prevents accidental selection of Section B / C rows.
+        if (selectedPoId && r.po_id !== selectedPoId) return;
+        if (checked) next.add(r.id); else next.delete(r.id);
       });
       return next;
     });
@@ -351,23 +760,33 @@ export default function FinInvoices() {
   async function openInvModal(id: string | null) {
     setInvEditId(id);
     setInvErr('');
+    setAssignError(null);
+    setApplyPctMsg(null);
     setRevSites([]);
-    setPickerIds(new Set());
+    setFullyBilledIds(new Set());
+    setMissingValueIds(new Set());
+    setOverallocConfirm(null);
     setCheckedRevs(new Set());
     setCustomItems([]);
     setShowCustForm(false);
     setCustForm({ site: '', desc: '', amt: '' });
+    setLineAmountOverride({});
     setPickerStatus('Select a project first');
     if (id) {
       const inv = invoices.find(x => x.id === id);
       setInvForm({
-        clientId:  inv?.client_id       || '',
-        number:    inv?.invoice_number  || '',
-        project:   inv?.project_name    || '',
-        status:    inv?.status          || 'Draft',
-        issueDate: inv?.issue_date      || today,
-        dueDate:   inv?.due_date        || '',
-        notes:     inv?.notes           || '',
+        clientId:         inv?.client_id                     || '',
+        number:           inv?.invoice_number                || '',
+        project:          inv?.project_name                  || '',
+        status:           inv?.status                        || 'Draft',
+        issueDate:        inv?.issue_date                    || today,
+        dueDate:          inv?.due_date                      || '',
+        notes:            inv?.notes                         || '',
+        poId:             inv?.po_id                         || '',
+        milestoneLabel:   inv?.milestone_label               || '',
+        milestonePercent: inv?.milestone_percent != null ? String(inv.milestone_percent) : '',
+        discount:         String(+(inv?.discount_amount ?? 0) || 0),
+        tax:              String(+(inv?.tax_amount      ?? 0) || 0),
       });
       // Load existing line items
       const { data: existingItems } = await supabase.from('invoice_items').select('*').eq('invoice_id', id);
@@ -375,9 +794,16 @@ export default function FinInvoices() {
       const revItems = existing.filter(x => x.revenue_id);
       const custItemsList: LineItem[] = existing.filter(x => !x.revenue_id).map(x => ({ ...x, _customId: Date.now() + Math.random() }));
       setCustomItems(custItemsList);
-      // Load revenue picker for the project, pre-checking existing revenue items
+      // Pre-populate the per-line amount overrides from the persisted
+      // amounts so the modal renders the exact stored figures (not the
+      // freshly-derived milestone default), then load the picker.
+      const overrideMap: Record<string, number> = {};
+      for (const it of revItems) {
+        if (it.revenue_id) overrideMap[it.revenue_id] = +(it.amount || 0);
+      }
+      setLineAmountOverride(overrideMap);
       if (inv?.project_name) {
-        await loadPickerForProject(inv.project_name, id, false);
+        await loadPickerForProject(inv.project_name, id, false, inv?.po_id || null);
         setCheckedRevs(new Set(revItems.map(x => x.revenue_id!).filter(Boolean)));
       }
     } else {
@@ -386,6 +812,7 @@ export default function FinInvoices() {
       setInvForm({
         clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
         project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
+        poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
       });
     }
     setInvModal(true);
@@ -395,35 +822,164 @@ export default function FinInvoices() {
     setInvEditId(null);
     setInvErr('');
     setRevSites([]);
-    setPickerIds(new Set());
+    setFullyBilledIds(new Set());
+    setMissingValueIds(new Set());
+    setOverallocConfirm(null);
     setCheckedRevs(new Set());
     setCustomItems([]);
     setShowCustForm(false);
+    setLineAmountOverride({});
     setPickerStatus('Select a project first');
     const year  = new Date().getFullYear();
     const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
-    setInvForm({ clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`, project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '' });
+    setInvForm({
+      clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
+      project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '',
+      poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
+    });
     setInvModal(true);
-    await loadPickerForProject(projectName, null, true);
+    await loadPickerForProject(projectName, null, true, null);
   }
 
   // ── Save invoice ──────────────────────────────────────────
+  //
+  // Validation order (fail fast, most specific first):
+  //   1. Required fields (client, number, issue date).
+  //   2. Discount / tax non-negative, resulting total non-negative.
+  //   3. Client/PO consistency: invoice.client_id === po.client_id;
+  //      every selected revenue row's po_id === invoice.po_id.
+  //   4. PO status: Cancelled blocks; Closed with remaining==0 blocks;
+  //      Closed with remaining>0 requires explicit confirm.
+  //   5. Site-level: previouslyInvoicedExcludingCurrent + itemAmount
+  //      must not exceed revenue.amount for each line.
+  //   6. PO-level: previousPOBilled + newCommercialSubtotal must not
+  //      exceed po_amount (commercialSubtotal excludes custom items,
+  //      discount, and tax).
   async function saveInvoice() {
     setInvErr('');
     if (!invForm.clientId)  { setInvErr('Please select a client.'); return; }
     if (!invForm.number)    { setInvErr('Invoice number is required.'); return; }
     if (!invForm.issueDate) { setInvErr('Issue date is required.'); return; }
-    const total = invTotal;
+
+    // Discount / tax sanity.
+    if (discountNum < 0) { setInvErr('Discount cannot be negative.'); return; }
+    if (taxNum      < 0) { setInvErr('Tax cannot be negative.'); return; }
+    if (invTotal    < 0) { setInvErr('Invoice total cannot be negative. Reduce the discount.'); return; }
+
+    // Milestone percent bounds (0 < x <= 100 when set).
+    if (invForm.milestonePercent.trim() !== '') {
+      const p = +invForm.milestonePercent;
+      if (!Number.isFinite(p) || p <= 0 || p > 100) {
+        setInvErr('Milestone percent must be greater than 0 and at most 100.');
+        return;
+      }
+    }
+
+    const po = invForm.poId ? purchaseOrders.find(p => p.id === invForm.poId) : undefined;
+
+    // Client / PO consistency (spec §13).
+    if (po) {
+      if (po.client_id !== invForm.clientId) {
+        setInvErr('Client does not match the selected PO. Choose a PO belonging to this client.');
+        return;
+      }
+      const bad = revenueLineItems.find(li => {
+        const rev = revenue.find(r => r.id === li.revenue_id);
+        return rev && rev.po_id !== po.id;
+      });
+      if (bad) {
+        setInvErr(`Site ${bad.site_id ?? ''} is not linked to the selected PO. Only sites mapped to this PO can be billed here.`);
+        return;
+      }
+    }
+
+    // PO status guards (spec §14). Selection-time UI already prevents
+    // most of these, but re-verify at save so a stale form or a status
+    // change mid-edit can't slip through.
+    if (po) {
+      const alreadyBilled = billedCommercialValueForPO(itemHistory, invoicePoMap, po.id, invEditId);
+      const poRemaining   = remainingPOValue(+(po.po_amount || 0), alreadyBilled);
+      if (po.status === 'Cancelled' && !invEditId) {
+        setInvErr(`PO ${po.po_number} is Cancelled and cannot be used for new invoices.`);
+        return;
+      }
+      if (po.status === 'Closed' && poRemaining <= 0 && !invEditId) {
+        setInvErr(`PO ${po.po_number} is Closed with 0 remaining value — no further invoices allowed.`);
+        return;
+      }
+      if (po.status === 'Closed' && poRemaining > 0 && !invEditId) {
+        if (!window.confirm(`PO ${po.po_number} is Closed but still has ${iqd(poRemaining)} remaining. Create this invoice anyway?`)) {
+          return;
+        }
+      }
+    }
+
+    // Site-level cumulative validation (spec §11). Excludes the current
+    // invoice's own historical rows so an edit that lowers or holds a
+    // line steady never trips its own past self. A zero-commercial-value
+    // site slipping through (e.g. legacy edit path or race) is blocked
+    // outright with a clear message — it must not consume PO capacity or
+    // pretend to be "fully billed".
+    for (const li of revenueLineItems) {
+      if (!li.revenue_id) continue;
+      const rev = revenue.find(r => r.id === li.revenue_id);
+      if (!rev) continue;
+      const commercial = +(rev.amount || 0);
+      if (!Number.isFinite(commercial) || commercial <= 0) {
+        setInvErr(`Site ${rev.site_id ?? li.revenue_id}: commercial value is missing — set it in Revenue before invoicing.`);
+        return;
+      }
+      const prevInv    = previouslyInvoicedForRevenue(itemHistory, li.revenue_id, invEditId);
+      const attempt    = +(li.amount || 0);
+      // Raw arithmetic — NOT the clamped display remaining — is what
+      // decides. A legacy over-billed row must still see the true
+      // negative to be blocked.
+      if (prevInv + attempt > commercial) {
+        const maxAvail = Math.max(commercial - prevInv, 0);
+        setInvErr(
+          `Site ${rev.site_id ?? ''}: commercial value ${iqd(commercial)}, previously invoiced ${iqd(prevInv)}, `
+          + `attempted ${iqd(attempt)}, maximum available ${iqd(maxAvail)}.`
+        );
+        return;
+      }
+    }
+
+    // PO-level cumulative validation (spec §12). Uses the commercial
+    // subtotal — NOT total_amount — so discount and tax never affect
+    // PO consumption.
+    if (po) {
+      const previousPOBilled = billedCommercialValueForPO(itemHistory, invoicePoMap, po.id, invEditId);
+      const attemptedTotal   = previousPOBilled + commercialSubtotal;
+      const poAmount         = +(po.po_amount || 0);
+      if (attemptedTotal > poAmount) {
+        const overage = attemptedTotal - poAmount;
+        setInvErr(
+          `PO ${po.po_number}: PO value ${iqd(poAmount)}, already billed ${iqd(previousPOBilled)}, `
+          + `this invoice ${iqd(commercialSubtotal)}, attempted total ${iqd(attemptedTotal)}, overage ${iqd(overage)}.`
+        );
+        return;
+      }
+    }
+
+    // Persistence payload. total_amount = subtotal − discount + tax
+    // (calcInvoiceTotal already applied above → invTotal). PO consumption
+    // is invoiceSubtotal(items), not total_amount (see PO validation
+    // block above, spec §22 scenarios E/F).
     const payload = {
-      client_id:      invForm.clientId,
-      invoice_number: invForm.number.trim(),
-      project_name:   invForm.project || null,
-      issue_date:     invForm.issueDate,
-      due_date:       invForm.dueDate || null,
-      status:         invForm.status || 'Draft',
-      total_amount:   total,
-      notes:          invForm.notes.trim() || null,
-      created_by:     currentUser?.full_name || '',
+      client_id:         invForm.clientId,
+      invoice_number:    invForm.number.trim(),
+      project_name:      invForm.project || null,
+      issue_date:        invForm.issueDate,
+      due_date:          invForm.dueDate || null,
+      status:            invForm.status || 'Draft',
+      total_amount:      invTotal,
+      notes:             invForm.notes.trim() || null,
+      created_by:        currentUser?.full_name || '',
+      po_id:             invForm.poId || null,
+      milestone_label:   invForm.milestoneLabel.trim() || null,
+      milestone_percent: invForm.milestonePercent.trim() === '' ? null : +invForm.milestonePercent,
+      discount_amount:   discountNum,
+      tax_amount:        taxNum,
     };
     try {
       let invoiceId = invEditId;
@@ -438,6 +994,8 @@ export default function FinInvoices() {
         setInvoices(list => [data, ...list]);
         invoiceId = data.id;
       }
+      // Strip transient UI-only fields (leading _) from the payload —
+      // invoice_items schema is unchanged (spec §5).
       if (allLineItems.length > 0 && invoiceId) {
         const itemPayloads = allLineItems.map(item => ({
           invoice_id:   invoiceId,
@@ -453,14 +1011,24 @@ export default function FinInvoices() {
             const filtered = prev.filter(x => x.invoice_id !== invoiceId);
             return [...filtered, ...savedItems];
           });
-          setInvoicedIds(prev => {
-            const next = new Set(prev);
-            savedItems.forEach((x: InvoiceItem) => { if (x.revenue_id) next.add(x.revenue_id); });
-            return next;
+          // Refresh itemHistory in-place: strip prior rows for this
+          // invoice, append the fresh ones. Keeps the cumulative maps
+          // accurate without a re-fetch.
+          setItemHistory(prev => {
+            const filtered = prev.filter(x => x.invoice_id !== invoiceId);
+            return [
+              ...filtered,
+              ...savedItems.map((x: InvoiceItem) => ({
+                invoice_id: x.invoice_id,
+                revenue_id: x.revenue_id,
+                amount: +(x.amount || 0),
+              })),
+            ];
           });
         }
       } else if (invEditId && invoiceId) {
         setItems(prev => prev.filter(x => x.invoice_id !== invoiceId));
+        setItemHistory(prev => prev.filter(x => x.invoice_id !== invoiceId));
       }
       setInvModal(false);
       showToast(invEditId ? 'Invoice updated.' : 'Invoice created!', true);
@@ -481,14 +1049,9 @@ export default function FinInvoices() {
     if (itemErr) { showToast(itemErr.message, false); return; }
     const { error } = await supabase.from('invoices').delete().eq('id', id);
     if (error) { showToast(error.message, false); return; }
-    const deletedItems = items.filter(i => i.invoice_id === id);
     setInvoices(list => list.filter(i => i.id !== id));
     setItems(list => list.filter(i => i.invoice_id !== id));
-    setInvoicedIds(prev => {
-      const next = new Set(prev);
-      deletedItems.forEach(i => { if (i.revenue_id) next.delete(i.revenue_id); });
-      return next;
-    });
+    setItemHistory(prev => prev.filter(x => x.invoice_id !== id));
     showToast('Invoice deleted.', true);
   }
 
@@ -714,9 +1277,42 @@ export default function FinInvoices() {
                               const client2 = clients.find(c => c.id === inv.client_id);
                               const invItems = items.filter(x => x.invoice_id === inv.id);
                               const invPayments = payments.filter(x => x.invoice_id === inv.id);
-                              printInvoice(inv, client2, invItems, invPayments);
+                              const po = inv.po_id ? purchaseOrders.find(p => p.id === inv.po_id) : null;
+                              const currency = (po?.currency || 'IQD').toUpperCase();
+                              const bank = selectBank(bankAccounts, currency);
+                              const model = buildPrintModel(inv, client2, invItems, invPayments, po || null, companySettings, bank, itemHistory, invoicePoMap, revenue);
+                              printInvoice(model);
                             }} style={{ color: '#7c3aed' }}>
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                            </button>
+                          )}
+                          {hasPerm('fin_invoices_download_pdf') && (
+                            /* Phase 4.8 — deterministic PDF export via @react-pdf/renderer.
+                               Sits next to the existing Print button (which uses window.print
+                               and depends on the browser engine). This one produces
+                               byte-different but layout-identical output across Chrome /
+                               Safari / Edge. Same permission gate; same model. */
+                            <button
+                              className={css.actBtn}
+                              title="Download PDF (deterministic)"
+                              disabled={isPdfBusy(inv.id)}
+                              onClick={() => {
+                                const client2 = clients.find(c => c.id === inv.client_id);
+                                const invItems = items.filter(x => x.invoice_id === inv.id);
+                                const invPayments = payments.filter(x => x.invoice_id === inv.id);
+                                const po = inv.po_id ? purchaseOrders.find(p => p.id === inv.po_id) : null;
+                                const currency = (po?.currency || 'IQD').toUpperCase();
+                                const bank = selectBank(bankAccounts, currency);
+                                const model = buildPrintModel(inv, client2, invItems, invPayments, po || null, companySettings, bank, itemHistory, invoicePoMap, revenue);
+                                void runPdfExport(inv.id, model);
+                              }}
+                              style={{ color: '#0f172a' }}
+                            >
+                              {isPdfBusy(inv.id) ? (
+                                <span style={{ fontSize: 9, fontWeight: 700 }}>…</span>
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                              )}
                             </button>
                           )}
                           {hasPerm('fin_invoices_delete') && (
@@ -753,14 +1349,14 @@ export default function FinInvoices() {
                 <div className={css.pendingGroupHdr}>
                   <div className={css.pendingGroupName}>{proj}</div>
                   <div className={css.pendingGroupActions}>
-                    <div className={css.pendingGroupMeta}>{sites.length} sites · {iqd(sites.reduce((s, r) => s + (+(r.amount || 0)), 0))}</div>
+                    <div className={css.pendingGroupMeta}>{sites.length} sites · {iqd(sites.reduce((s, x) => s + x.remaining, 0))}</div>
                     <button className={css.btnInvoiceNow} onClick={() => invQuickCreate(proj)}>⚡ Invoice Now</button>
                   </div>
                 </div>
                 <table className={css.table} style={{ fontSize: 12 }}>
-                  <thead><tr><th>Section</th><th>Site ID</th><th>Status</th><th className={css.num}>Amount (IQD)</th></tr></thead>
+                  <thead><tr><th>Section</th><th>Site ID</th><th>Status</th><th className={css.num}>Remaining (IQD)</th></tr></thead>
                   <tbody>
-                    {sites.map(r => (
+                    {sites.map(({ r, remaining }) => (
                       <tr key={r.id}>
                         <td style={{ color: '#64748b' }}>{r.section_name || '—'}</td>
                         <td style={{ fontWeight: 600 }}>{String(r.site_id || '—')}</td>
@@ -769,7 +1365,7 @@ export default function FinInvoices() {
                             {r.status || '—'}
                           </span>
                         </td>
-                        <td className={css.num} style={{ fontWeight: 700, color: '#16a34a' }}>{iqd(r.amount || 0)}</td>
+                        <td className={css.num} style={{ fontWeight: 700, color: '#16a34a' }}>{iqd(remaining)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -798,13 +1394,70 @@ export default function FinInvoices() {
                   value={invForm.number} onChange={e => setInvForm(f => ({ ...f, number: e.target.value }))} />
               </div>
               <div className={css.formField}>
-                <label>Project</label>
-                <select className={css.formSel} value={invForm.project}
+                <label>Purchase Order</label>
+                <select className={css.formSel}
+                  value={invForm.poId}
+                  disabled={!invForm.clientId}
+                  onChange={e => {
+                    const newPoId = e.target.value;
+                    const po = newPoId ? purchaseOrders.find(p => p.id === newPoId) : undefined;
+                    // Closed with remaining > 0 needs an explicit confirm
+                    // at selection (re-verified at save). Cancelled and
+                    // Closed-with-0-remaining are blocked outright for
+                    // NEW invoices, and left selectable on edit (so an
+                    // existing invoice can still be inspected).
+                    if (po && !invEditId) {
+                      const billed = billedCommercialValueForPO(itemHistory, invoicePoMap, po.id, null);
+                      const rem    = remainingPOValue(+(po.po_amount || 0), billed);
+                      if (po.status === 'Cancelled') {
+                        showToast(`PO ${po.po_number} is Cancelled and cannot be selected for a new invoice.`, false);
+                        return;
+                      }
+                      if (po.status === 'Closed' && rem <= 0) {
+                        showToast(`PO ${po.po_number} is Closed with 0 remaining — no further invoices allowed.`, false);
+                        return;
+                      }
+                      if (po.status === 'Closed' && rem > 0) {
+                        if (!window.confirm(`PO ${po.po_number} is Closed but has ${iqd(rem)} remaining. Select anyway?`)) return;
+                      }
+                    }
+                    setInvForm(f => ({
+                      ...f,
+                      poId: newPoId,
+                      // When a PO is selected on NEW invoice, default project
+                      // to the PO's project (spec §3). On edit, do not
+                      // silently relink — preserve the existing project.
+                      project: (!invEditId && po?.project_name) ? po.project_name : f.project,
+                    }));
+                    setCheckedRevs(new Set());
+                    setLineAmountOverride({});
+                    const proj = (!invEditId && po?.project_name) ? po.project_name : invForm.project;
+                    if (proj) loadPickerForProject(proj, invEditId, false, newPoId || null);
+                  }}>
+                  <option value="">— None (Legacy / Non-PO) —</option>
+                  {(() => {
+                    const forClient = purchaseOrders.filter(p => p.client_id === invForm.clientId);
+                    const open      = forClient.filter(p => p.status === 'Open');
+                    const other     = forClient.filter(p => p.status !== 'Open');
+                    return [...open, ...other].map(p => (
+                      <option key={p.id} value={p.id}
+                        disabled={!invEditId && p.status === 'Cancelled'}
+                        style={p.status !== 'Open' ? { color: '#94a3b8' } : undefined}>
+                        {p.po_number} · {iqd(p.po_amount)} · {p.status}
+                      </option>
+                    ));
+                  })()}
+                </select>
+              </div>
+              <div className={css.formField}>
+                <label>Project {selectedPO ? '(locked to PO)' : ''}</label>
+                <select className={css.formSel} value={invForm.project} disabled={!!selectedPO && !invEditId}
                   onChange={e => {
                     const p = e.target.value;
                     setInvForm(f => ({ ...f, project: p }));
                     setCheckedRevs(new Set());
-                    loadPickerForProject(p, invEditId, false);
+                    setLineAmountOverride({});
+                    loadPickerForProject(p, invEditId, false, invForm.poId || null);
                   }}>
                   <option value="">— Select —</option>
                   {FIN_PROJECTS.filter(p => p !== 'General').map(p => <option key={p} value={p}>{p}</option>)}
@@ -833,6 +1486,84 @@ export default function FinInvoices() {
                 <textarea className={css.formTextarea} rows={2} placeholder="Optional…"
                   value={invForm.notes} onChange={e => setInvForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
+              <div className={css.formField}>
+                <label>Billing Stage / Milestone Name</label>
+                <input className={css.formInput} placeholder="e.g. First Milestone" maxLength={80}
+                  value={invForm.milestoneLabel}
+                  onChange={e => setInvForm(f => ({ ...f, milestoneLabel: e.target.value }))} />
+              </div>
+              <div className={css.formField}>
+                <label>Invoice Percentage (%)</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input type="number" min={0} max={100} step="0.01" className={css.formInput}
+                    placeholder="e.g. 70"
+                    value={invForm.milestonePercent}
+                    onChange={e => { setInvForm(f => ({ ...f, milestonePercent: e.target.value })); setApplyPctMsg(null); }} />
+                  {(() => {
+                    const pctRaw = invForm.milestonePercent.trim();
+                    const pctNum = +pctRaw;
+                    const pctValid = pctRaw !== '' && Number.isFinite(pctNum) && pctNum > 0 && pctNum <= 100;
+                    const hasSelection = checkedRevs.size > 0;
+                    const btnDisabled = !pctValid || !hasSelection;
+                    const btnLabel = pctValid ? `Apply ${pctNum}%` : 'Apply %';
+                    return (
+                      <button type="button" className={css.btnGhost}
+                        disabled={btnDisabled}
+                        title={
+                          !pctValid ? 'Enter an invoice percentage between 0 and 100.'
+                          : !hasSelection ? 'Select at least one Site before applying the percentage.'
+                          : `Fill each selected line's amount with MIN(commercial × ${pctNum}/100, remaining)`
+                        }
+                        onClick={() => {
+                          // Defensive: mirror the disabled-state checks so
+                          // a race condition (e.g. sites unchecked between
+                          // render and click) surfaces a visible message
+                          // rather than a silent no-op.
+                          if (!pctValid) { setApplyPctMsg('Enter an invoice percentage between 0 and 100.'); return; }
+                          if (!hasSelection) { setApplyPctMsg('Select at least one Site before applying the percentage.'); return; }
+                          setApplyPctMsg(null);
+                          const next: Record<string, number> = { ...lineAmountOverride };
+                          for (const r of revSites) {
+                            if (!checkedRevs.has(r.id)) continue;
+                            const commercial = +(r.amount || 0);
+                            const prevInv    = previouslyInvoicedForRevenue(itemHistory, r.id, invEditId);
+                            const remBefore  = remainingSiteValue(commercial, prevInv);
+                            next[r.id] = Math.min(commercial * pctNum / 100, remBefore);
+                          }
+                          setLineAmountOverride(next);
+                        }}>
+                        {btnLabel}
+                      </button>
+                    );
+                  })()}
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Applied to selected Sites only.</div>
+                {applyPctMsg && (
+                  <div style={{
+                    background: '#fef3c7', color: '#92400e',
+                    border: '1px solid #fde68a', borderRadius: 6,
+                    padding: '6px 10px', marginTop: 6, fontSize: 12,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8,
+                  }}>
+                    <span>{applyPctMsg}</span>
+                    <button type="button" onClick={() => setApplyPctMsg(null)}
+                      style={{ background: 'transparent', border: 'none', color: '#92400e', cursor: 'pointer', fontWeight: 700 }}
+                      title="Dismiss">×</button>
+                  </div>
+                )}
+              </div>
+              <div className={css.formField}>
+                <label>Discount</label>
+                <input type="number" min={0} step="1" className={css.formInput}
+                  value={invForm.discount}
+                  onChange={e => setInvForm(f => ({ ...f, discount: e.target.value }))} />
+              </div>
+              <div className={css.formField}>
+                <label>Tax</label>
+                <input type="number" min={0} step="1" className={css.formInput}
+                  value={invForm.tax}
+                  onChange={e => setInvForm(f => ({ ...f, tax: e.target.value }))} />
+              </div>
               {invEditId && (
                 <div className={css.formField}>
                   <label>Received to Date</label>
@@ -844,63 +1575,341 @@ export default function FinInvoices() {
               )}
             </div>
 
-            {/* Revenue Picker */}
+            {/* PO summary card — only when a PO is bound. Uses helpers
+                so figures stay in sync with saveInvoice() validation.
+                Never confuse Remaining PO (billed vs. authorized) with
+                Outstanding Payment (billed vs. received). */}
+            {selectedPO && (() => {
+              const alreadyBilled = billedCommercialValueForPO(itemHistory, invoicePoMap, selectedPO.id, invEditId);
+              const remainingAfter = remainingPOValue(+(selectedPO.po_amount || 0), alreadyBilled + commercialSubtotal);
+              const mappedSiteValue = revenue
+                .filter(r => r.po_id === selectedPO.id)
+                .reduce((s, r) => s + (+(r.amount || 0)), 0);
+              return (
+                <div style={{ marginTop: 14, padding: 12, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                  <div className={css.pickerLabel} style={{ marginBottom: 8 }}>
+                    PO CONSUMPTION — {selectedPO.po_number} ({selectedPO.currency || 'IQD'} · {selectedPO.status})
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, fontSize: 12 }}>
+                    <div><div style={{ color: '#94a3b8' }}>PO Date</div><strong>{selectedPO.po_date || '—'}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>PO Value</div><strong>{iqd(selectedPO.po_amount)}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>Project</div><strong>{selectedPO.project_name || '—'}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>Mapped Site Value</div><strong>{iqd(mappedSiteValue)}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>Previously Billed</div><strong>{iqd(alreadyBilled)}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>This Invoice (Commercial)</div><strong style={{ color: '#2563eb' }}>{iqd(commercialSubtotal)}</strong></div>
+                    <div><div style={{ color: '#94a3b8' }}>Remaining After Save</div>
+                      <strong style={{ color: remainingAfter <= 0 ? '#dc2626' : '#16a34a' }}>{iqd(remainingAfter)}</strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Revenue Picker.
+                Two rendering modes:
+                  • When a PO is bound → split into Section A / B / C so
+                    users can assign newly-mapped sites to the PO without
+                    leaving the invoice modal (Issue 1 fix).
+                  • When no PO is bound → keep the original flat grouped-
+                    by-section picker (legacy no-PO invoices, spec §22).
+                Row classification is driven by siteBillingStatus() —
+                zero-value sites render an amber "Commercial Value
+                Missing" badge instead of the misleading "Fully Invoiced"
+                (Issue 2 fix). */}
             <div style={{ marginTop: 20 }}>
               <div className={css.pickerHdr}>
                 <div className={css.pickerLabel}>SELECT SITES FROM REVENUE</div>
                 <div className={css.pickerStatus}>{pickerLoad ? 'Loading…' : pickerStatus}</div>
               </div>
-              <div className={css.pickerBox}>
-                {!invForm.project
-                  ? <div className={css.pickerEmpty}>← Select a project above to load sites</div>
-                  : pickerLoad
-                    ? <div className={css.pickerEmpty}>Loading sites…</div>
-                    : revSites.length === 0
-                      ? <div className={css.pickerEmpty}>No revenue entries found for this project.</div>
-                      : Object.entries(revSections).map(([sec, sites]) => {
-                          const availSites = sites.filter(r => !pickerIds.has(r.id));
-                          const allChecked = availSites.length > 0 && availSites.every(r => checkedRevs.has(r.id));
-                          return (
-                            <div key={sec} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                              <div className={css.pickerSecHdr}>
-                                <input type="checkbox" checked={allChecked}
-                                  onChange={e => toggleSection(sec, e.target.checked)} />
-                                {sec}
-                              </div>
-                              {sites.map(r => {
-                                const isInvoiced = pickerIds.has(r.id);
-                                return (
-                                  <label key={r.id}
-                                    className={`${css.pickerRow} ${isInvoiced ? css.pickerRowDisabled : ''}`}
-                                    style={{ display: 'flex' }}
-                                  >
-                                    <input type="checkbox" disabled={isInvoiced}
-                                      checked={!isInvoiced && checkedRevs.has(r.id)}
-                                      onChange={e => {
-                                        setCheckedRevs(prev => {
-                                          const next = new Set(prev);
-                                          if (e.target.checked) next.add(r.id); else next.delete(r.id);
-                                          return next;
-                                        });
-                                      }} />
-                                    <span className={css.pickerSiteId}>{String(r.site_id || '—')}</span>
-                                    <span className={css.pickerSec}>{r.section_name || ''}</span>
-                                    <span className={css.pickerStatus2}>{r.status || ''}</span>
-                                    {isInvoiced && <span className={css.pickerInvoicedBadge}>Invoiced</span>}
-                                    <span className={css.pickerAmt}>{iqd(r.amount || 0)}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          );
-                        })
+              {(() => {
+                // A single reusable row renderer keeps Section A / B / C
+                // visually identical apart from the trailing action slot.
+                function renderSiteRow(
+                  r: RevRow,
+                  mode: 'selectable' | 'assignable' | 'otherPo',
+                  otherPoNumber?: string,
+                ) {
+                  const isMissing     = missingValueIds.has(r.id);
+                  const isFullyBilled = fullyBilledIds.has(r.id);
+                  const prev = previouslyInvoicedForRevenue(itemHistory, r.id, invEditId);
+                  const remaining = remainingSiteValue(+(r.amount || 0), prev);
+                  const disabled = mode !== 'selectable' || isMissing || isFullyBilled;
+                  // Wrapper element: <label> only for selectable rows
+                  // (needed for checkbox click forwarding). For
+                  // 'assignable' and 'otherPo' rows a plain <div> is
+                  // used — a <label> around a <button> can synthesise
+                  // an extra click on the labelable descendant and, on
+                  // some browsers, swallow the intended button click.
+                  const RowTag: 'label' | 'div' = mode === 'selectable' ? 'label' : 'div';
+                  return (
+                    <RowTag key={r.id}
+                      className={`${css.pickerRow} ${disabled ? css.pickerRowDisabled : ''}`}
+                      style={{ display: 'flex' }}
+                    >
+                      {mode === 'selectable' ? (
+                        <input type="checkbox" disabled={disabled}
+                          checked={!disabled && checkedRevs.has(r.id)}
+                          onChange={e => {
+                            setCheckedRevs(prev2 => {
+                              const next = new Set(prev2);
+                              if (e.target.checked) next.add(r.id); else next.delete(r.id);
+                              return next;
+                            });
+                          }} />
+                      ) : (
+                        <span style={{ display: 'inline-block', width: 13 }} />
+                      )}
+                      <span className={css.pickerSiteId}>{String(r.site_id || '—')}</span>
+                      <span className={css.pickerSec}>{r.section_name || ''}</span>
+                      <span className={css.pickerStatus2}>{r.status || ''}</span>
+                      {isMissing ? (
+                        <span
+                          className={css.pickerInvoicedBadge}
+                          style={{ background: '#fef3c7', color: '#b45309' }}
+                          title="Set the Site commercial value in Revenue before invoicing."
+                        >Commercial Value Missing</span>
+                      ) : isFullyBilled ? (
+                        <span className={css.pickerInvoicedBadge}>Fully Invoiced</span>
+                      ) : (mode === 'selectable' && prev > 0) ? (
+                        <span className={css.pickerInvoicedBadge} style={{ background: '#fef3c7', color: '#b45309' }}>Partial</span>
+                      ) : null}
+                      {mode === 'otherPo' && otherPoNumber && (
+                        <span style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', marginLeft: 6 }}>
+                          Assigned to {otherPoNumber}
+                        </span>
+                      )}
+                      <span className={css.pickerAmt} title={`Commercial ${iqd(r.amount || 0)} · Remaining ${iqd(remaining)}`}>
+                        {isMissing ? '—' : iqd(remaining)}
+                      </span>
+                      {mode === 'assignable' && (
+                        <button
+                          type="button"
+                          className={css.actBtn}
+                          style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#4f46e5' }}
+                          disabled={assigningRevIds.has(r.id) || isMissing}
+                          title={isMissing
+                            ? 'Set commercial value in Revenue before assigning.'
+                            : `Assign this Site to ${selectedPO?.po_number || 'this PO'}`}
+                          onClick={e => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            tryAssignRevIds([r.id]);
+                          }}
+                        >
+                          {assigningRevIds.has(r.id) ? 'Assigning…' : 'Assign to PO'}
+                        </button>
+                      )}
+                    </RowTag>
+                  );
                 }
-              </div>
+
+                if (!invForm.project) {
+                  return <div className={css.pickerBox}><div className={css.pickerEmpty}>← Select a project above to load sites</div></div>;
+                }
+                if (pickerLoad) {
+                  return <div className={css.pickerBox}><div className={css.pickerEmpty}>Loading sites…</div></div>;
+                }
+                if (revSites.length === 0) {
+                  return <div className={css.pickerBox}><div className={css.pickerEmpty}>No revenue entries found for this project.</div></div>;
+                }
+
+                // ── Legacy no-PO flow: original flat picker (unchanged
+                // ── grouped-by-section layout, spec §22 backward compat).
+                if (!selectedPO) {
+                  return (
+                    <div className={css.pickerBox}>
+                      {Object.entries(revSections).map(([sec, sites]) => {
+                        const availSites = sites.filter(r => !fullyBilledIds.has(r.id) && !missingValueIds.has(r.id));
+                        const allChecked = availSites.length > 0 && availSites.every(r => checkedRevs.has(r.id));
+                        return (
+                          <div key={sec} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <div className={css.pickerSecHdr}>
+                              <input type="checkbox" checked={allChecked}
+                                onChange={e => toggleSection(sec, e.target.checked)} />
+                              {sec}
+                            </div>
+                            {sites.map(r => renderSiteRow(r, 'selectable'))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+
+                // ── PO-bound flow: Section A / B / C.
+                const sectionA = revSites.filter(r =>
+                  r.po_id === selectedPO.id &&
+                  r.project_name === selectedPO.project_name
+                );
+                const sectionB = revSites.filter(r =>
+                  r.po_id == null &&
+                  r.project_name === selectedPO.project_name
+                );
+                const sectionC = revSites.filter(r =>
+                  r.po_id != null &&
+                  r.po_id !== selectedPO.id &&
+                  r.project_name === selectedPO.project_name
+                );
+                const assignableIds = sectionB
+                  .filter(r => !missingValueIds.has(r.id))
+                  .map(r => r.id);
+                return (
+                  <div className={css.pickerBox}>
+                    {/* Persistent assignment error banner — stays until
+                        dismissed or superseded by a successful assign.
+                        Toasts alone were disappearing before users could
+                        read the failure reason. */}
+                    {assignError && (
+                      <div style={{
+                        background: '#fef2f2', color: '#991b1b',
+                        border: '1px solid #fecaca', borderRadius: 6,
+                        padding: '8px 12px', margin: '8px 12px',
+                        fontSize: 12, display: 'flex',
+                        justifyContent: 'space-between', alignItems: 'flex-start', gap: 8,
+                      }}>
+                        <span><strong>Assign failed:</strong> {assignError}</span>
+                        <button type="button" onClick={() => setAssignError(null)}
+                          style={{ background: 'transparent', border: 'none', color: '#991b1b', cursor: 'pointer', fontWeight: 700 }}
+                          title="Dismiss">×</button>
+                      </div>
+                    )}
+                    {/* Section A */}
+                    <div style={{ borderBottom: '1px solid #e2e8f0' }}>
+                      <div className={css.pickerSecHdr} style={{ background: '#eef2ff', color: '#1e293b' }}>
+                        SITES ASSIGNED TO THIS PO
+                        <span style={{ marginLeft: 8, fontSize: 11, color: '#64748b', fontWeight: 500 }}>
+                          ({sectionA.length})
+                        </span>
+                      </div>
+                      {sectionA.length === 0
+                        ? <div className={css.pickerEmpty} style={{ padding: '10px 12px', fontSize: 12 }}>
+                            No Sites are mapped to this PO yet. Use the section below to assign Sites without leaving this modal.
+                          </div>
+                        : sectionA.map(r => renderSiteRow(r, 'selectable'))
+                      }
+                    </div>
+
+                    {/* Section B */}
+                    <div style={{ borderBottom: '1px solid #e2e8f0' }}>
+                      <div className={css.pickerSecHdr} style={{ background: '#f0fdf4', color: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>
+                          AVAILABLE PROJECT SITES
+                          <span style={{ marginLeft: 8, fontSize: 11, color: '#64748b', fontWeight: 500 }}>
+                            ({sectionB.length})
+                          </span>
+                        </span>
+                        {assignableIds.length > 1 && (
+                          <button
+                            type="button"
+                            className={css.actBtn}
+                            style={{ fontSize: 11, fontWeight: 700, color: '#4f46e5' }}
+                            disabled={assignableIds.some(id => assigningRevIds.has(id))}
+                            onClick={() => tryAssignRevIds(assignableIds)}
+                            title={`Assign all ${assignableIds.length} available Sites to ${selectedPO.po_number}`}
+                          >
+                            Assign All ({assignableIds.length}) to PO
+                          </button>
+                        )}
+                      </div>
+                      {sectionB.length === 0
+                        ? <div className={css.pickerEmpty} style={{ padding: '10px 12px', fontSize: 12 }}>
+                            No unassigned Sites remain for this project.
+                          </div>
+                        : sectionB.map(r => renderSiteRow(r, 'assignable'))
+                      }
+                    </div>
+
+                    {/* Section C — display only, no interaction */}
+                    {sectionC.length > 0 && (
+                      <div>
+                        <div className={css.pickerSecHdr} style={{ background: '#f8fafc', color: '#64748b' }}>
+                          ASSIGNED TO ANOTHER PO
+                          <span style={{ marginLeft: 8, fontSize: 11, color: '#94a3b8', fontWeight: 500 }}>
+                            ({sectionC.length}) — reassignment happens in Purchase Orders
+                          </span>
+                        </div>
+                        {sectionC.map(r => {
+                          const otherPo = purchaseOrders.find(p => p.id === r.po_id);
+                          return renderSiteRow(r, 'otherPo', otherPo?.po_number || 'another PO');
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className={css.pickerFooter}>
                 <div className={css.pickerCount}>{revenueLineItems.length} site{revenueLineItems.length !== 1 ? 's' : ''} selected</div>
-                <div className={css.pickerTotal}>Total: <span className={css.pickerTotalAmt}>{invTotal.toLocaleString()} IQD</span></div>
+                <div className={css.pickerTotal}>Commercial: <span className={css.pickerTotalAmt}>{iqd(commercialSubtotal)}</span></div>
               </div>
             </div>
+
+            {/* Per-line UX breakdown — Site ID, Section, Commercial Value,
+                Previously Invoiced, Remaining Before, Invoice %, This
+                Invoice Amount, Remaining After. Only revenue-linked
+                selected lines appear here; custom items stay in their
+                own "Extra / Custom Items" block. Values are editable
+                per-line (amount input takes precedence over milestone
+                default). */}
+            {revenueLineItems.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div className={css.pickerLabel} style={{ marginBottom: 6 }}>LINE ITEM BREAKDOWN</div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className={css.table} style={{ fontSize: 11 }}>
+                    <thead><tr>
+                      <th>Site ID</th>
+                      <th>Section</th>
+                      <th className={css.num}>Commercial</th>
+                      <th className={css.num}>Prev. Invoiced</th>
+                      <th className={css.num}>Remaining Before</th>
+                      <th className={css.num}>Invoice %</th>
+                      <th className={css.num}>This Invoice</th>
+                      <th className={css.num}>Remaining After</th>
+                    </tr></thead>
+                    <tbody>
+                      {revenueLineItems.map(li => {
+                        const key = li.revenue_id || '';
+                        const commercial = li._commercialValue || 0;
+                        const prev       = li._previouslyInvoiced || 0;
+                        const remBefore  = li._remainingBefore || 0;
+                        const amount     = +(li.amount || 0);
+                        const pctDisplay = li._invoicePercent || 0;
+                        const remAfter   = commercial - prev - amount; // raw — may go negative to flag over-bill
+                        return (
+                          <tr key={key}>
+                            <td style={{ fontWeight: 600 }}>{String(li.site_id || '—')}</td>
+                            <td style={{ color: '#64748b' }}>{li.section_name || '—'}</td>
+                            <td className={css.num}>{iqd(commercial)}</td>
+                            <td className={css.num} style={{ color: '#64748b' }}>{iqd(prev)}</td>
+                            <td className={css.num}>{iqd(remBefore)}</td>
+                            <td className={css.num}>
+                              <input type="number" min={0} max={100} step="0.01"
+                                className={css.formInput}
+                                style={{ width: 70, textAlign: 'right', fontSize: 11, padding: '3px 6px' }}
+                                value={pctDisplay ? pctDisplay.toFixed(2) : ''}
+                                onChange={e => {
+                                  const pct = +e.target.value || 0;
+                                  const derived = Math.min(commercial * pct / 100, remBefore);
+                                  setLineAmountOverride(o => ({ ...o, [key]: derived }));
+                                }} />
+                            </td>
+                            <td className={css.num}>
+                              <input type="number" min={0} step="1"
+                                className={css.formInput}
+                                style={{ width: 110, textAlign: 'right', fontSize: 11, padding: '3px 6px' }}
+                                value={amount}
+                                onChange={e => setLineAmountOverride(o => ({ ...o, [key]: +e.target.value || 0 }))} />
+                            </td>
+                            <td className={css.num} style={{ color: remAfter < 0 ? '#dc2626' : '#16a34a', fontWeight: 700 }}>
+                              {iqd(remAfter)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Custom Items */}
             <div style={{ marginTop: 18 }}>
@@ -942,10 +1951,56 @@ export default function FinInvoices() {
               )}
             </div>
 
+            {/* Live invoice totals — subtotal / discount / tax / total.
+                Uses helpers so the modal's math and saveInvoice's
+                persisted total_amount can never drift. */}
+            <div className={css.totalBar} style={{ marginTop: 18 }}>
+              <div className={css.totalBarItem} style={{ color: '#64748b' }}>
+                Subtotal <strong style={{ color: '#1e293b' }}>{iqd(invSubtotal)}</strong>
+              </div>
+              <div className={css.totalBarItem} style={{ color: '#64748b' }}>
+                Discount <strong style={{ color: '#dc2626' }}>{iqd(discountNum)}</strong>
+              </div>
+              <div className={css.totalBarItem} style={{ color: '#64748b' }}>
+                Tax <strong style={{ color: '#2563eb' }}>{iqd(taxNum)}</strong>
+              </div>
+              <div className={css.totalBarItem} style={{ color: '#1e293b' }}>
+                Invoice Total <strong style={{ color: invTotal < 0 ? '#dc2626' : '#16a34a', fontSize: 15 }}>{iqd(invTotal)}</strong>
+              </div>
+            </div>
+
             {invErr && <div className={css.modalErr}>{invErr}</div>}
             <div className={css.modalActions}>
               <button className={css.btnCancel} onClick={() => setInvModal(false)}>Cancel</button>
               <button className={css.btnSave} onClick={saveInvoice}>Save Invoice</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Overallocation warning — Site → PO assignment. Wording mirrors
+          the sibling flow in src/pages/FinPOs.tsx so users see the same
+          copy across pages. Default Cancel; "Assign anyway" is
+          destructive and leaves the PO over-allocated. */}
+      {overallocConfirm && createPortal(
+        <div className={css.overlay} onClick={e => { if (e.target === e.currentTarget) setOverallocConfirm(null); }}>
+          <div className={css.modal}>
+            <div className={css.modalTitle} style={{ color: '#dc2626' }}>Over-allocation Warning</div>
+            <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6 }}>
+              Assigning {overallocConfirm.revIds.length === 1 ? 'this site' : `these ${overallocConfirm.revIds.length} sites`} to PO{' '}
+              <strong>{overallocConfirm.poNumber}</strong> would push mapped commercial value to{' '}
+              <strong>{iqd(overallocConfirm.projected)}</strong>, exceeding the PO amount of{' '}
+              <strong>{iqd(overallocConfirm.poAmount)}</strong> by{' '}
+              <strong style={{ color: '#dc2626' }}>{iqd(overallocConfirm.projected - overallocConfirm.poAmount)}</strong>.
+              <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+                Cancel and adjust the PO amount, or the revenue values, before continuing.
+                "Assign anyway" will link the {overallocConfirm.revIds.length === 1 ? 'site' : 'sites'} but leave the PO in an over-allocated state.
+              </div>
+            </div>
+            <div className={css.modalActions}>
+              <button className={css.btnCancel} onClick={() => setOverallocConfirm(null)}>Cancel</button>
+              <button className={css.btnDanger} onClick={confirmOverallocAssign}>Assign anyway</button>
             </div>
           </div>
         </div>,
@@ -1000,6 +2055,16 @@ export default function FinInvoices() {
             </div>
             <div className={css.detailMeta}>
               <strong>{detailClient?.company_name || '—'}</strong> &nbsp;·&nbsp; {detailInv.project_name || '—'} &nbsp;·&nbsp; Issued: {detailInv.issue_date || '—'} &nbsp;·&nbsp; Due: {detailInv.due_date || '—'}
+              {(() => {
+                const po = detailInv.po_id ? purchaseOrders.find(p => p.id === detailInv.po_id) : undefined;
+                const parts: string[] = [];
+                if (po) parts.push(`PO: ${po.po_number}`);
+                if (detailInv.milestone_label) parts.push(`Milestone: ${detailInv.milestone_label}`);
+                if (detailInv.milestone_percent != null) parts.push(`${detailInv.milestone_percent}%`);
+                return parts.length > 0
+                  ? <div style={{ marginTop: 2, color: '#64748b' }}>{parts.join(' · ')}</div>
+                  : null;
+              })()}
               {detailInv.notes && <div style={{ marginTop: 4, fontStyle: 'italic' }}>{detailInv.notes}</div>}
             </div>
 
@@ -1068,8 +2133,34 @@ export default function FinInvoices() {
                 <button className={css.btnPurple} onClick={() => {
                   const invItems = items.filter(x => x.invoice_id === detailInv.id);
                   const invPays  = payments.filter(x => x.invoice_id === detailInv.id);
-                  printInvoice(detailInv, detailClient, invItems, invPays);
+                  const po = detailInv.po_id ? purchaseOrders.find(p => p.id === detailInv.po_id) : null;
+                  const currency = (po?.currency || 'IQD').toUpperCase();
+                  const bank = selectBank(bankAccounts, currency);
+                  const model = buildPrintModel(detailInv, detailClient, invItems, invPays, po || null, companySettings, bank, itemHistory, invoicePoMap, revenue);
+                  printInvoice(model);
                 }}>📄 PDF</button>
+              )}
+              {hasPerm('fin_invoices_download_pdf') && (
+                /* Phase 4.8 — deterministic PDF export (@react-pdf/renderer).
+                   Sibling of the existing browser Print button; same model,
+                   same permission, different renderer. Disables + swaps its
+                   label to "Generating…" while pdfkit runs. */
+                <button
+                  className={css.btnGreen}
+                  disabled={isPdfBusy(detailInv.id)}
+                  title="Download PDF (deterministic)"
+                  onClick={() => {
+                    const invItems = items.filter(x => x.invoice_id === detailInv.id);
+                    const invPays  = payments.filter(x => x.invoice_id === detailInv.id);
+                    const po = detailInv.po_id ? purchaseOrders.find(p => p.id === detailInv.po_id) : null;
+                    const currency = (po?.currency || 'IQD').toUpperCase();
+                    const bank = selectBank(bankAccounts, currency);
+                    const model = buildPrintModel(detailInv, detailClient, invItems, invPays, po || null, companySettings, bank, itemHistory, invoicePoMap, revenue);
+                    void runPdfExport(detailInv.id, model);
+                  }}
+                >
+                  {isPdfBusy(detailInv.id) ? 'Generating…' : 'Download PDF'}
+                </button>
               )}
               {hasPerm('fin_invoices_record_payment') && (
                 <button className={css.btnSave} onClick={() => { setDetailId(null); openPayModal(detailInv.id); }}>Record Payment</button>

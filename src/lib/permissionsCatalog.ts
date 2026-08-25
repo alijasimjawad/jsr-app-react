@@ -184,6 +184,27 @@ export const ACTION_SCOPES: ActionScope[] = [
     ],
   },
   {
+    id: 'fin_purchase_orders',
+    label: 'Purchase Orders',
+    actions: [
+      { key: 'create_fin_purchase_orders', label: 'Create PO' },
+      { key: 'edit_fin_purchase_orders',   label: 'Edit PO' },
+      { key: 'delete_fin_purchase_orders', label: 'Delete PO' },
+    ],
+  },
+  {
+    id: 'fin_company_settings',
+    label: 'Company Settings',
+    // Bank-account CRUD deliberately reuses `edit_fin_company_settings` per
+    // Phase 3A spec — bank accounts are managed on the same Settings page
+    // and share the same "trusted admin" trust boundary as company profile
+    // edits, so a second, near-identical permission would add friction with
+    // no real access-control benefit.
+    actions: [
+      { key: 'edit_fin_company_settings', label: 'Edit Company Settings' },
+    ],
+  },
+  {
     id: 'fin_report',
     label: 'Monthly Report',
     actions: [
@@ -352,6 +373,12 @@ export const LEGACY_OPEN_ACTIONS: Record<string, string> = {
   fin_clients_add: 'view_fin_clients',
   fin_clients_edit: 'view_fin_clients',
   fin_clients_delete: 'view_fin_clients',
+
+  create_fin_purchase_orders: 'view_fin_purchase_orders',
+  edit_fin_purchase_orders:   'view_fin_purchase_orders',
+  delete_fin_purchase_orders: 'view_fin_purchase_orders',
+
+  edit_fin_company_settings: 'view_fin_company_settings',
 
   fin_report_adjust_salary: 'view_fin_report',
   fin_report_adjust_all: 'view_fin_report',
