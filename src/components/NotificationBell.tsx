@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { storageKey as brandStorageKey } from '../config/brand';
+import { sendPushToUser } from '../lib/pushNotify';
 import styles from './NotificationBell.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -102,6 +103,8 @@ export default function NotificationBell() {
   const [pushSupported, setPushSupported] = useState(true);
   const [loadingPush,   setLoadingPush]   = useState(false);
   const [pushError,     setPushError]     = useState<string | null>(null);
+  const [testingPush,   setTestingPush]   = useState(false);
+  const [testSent,      setTestSent]      = useState(false);
 
   const wrapRef      = useRef<HTMLDivElement>(null);
   const markTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,6 +278,29 @@ export default function NotificationBell() {
     setLoadingPush(false);
   }
 
+  // Sends a real push through /api/send-push to this user's saved
+  // subscription, so "Enable" can be verified immediately on this device
+  // instead of waiting for a real activity-log/expense event to trigger one.
+  async function sendTestPush() {
+    if (!currentUser) return;
+    setTestingPush(true);
+    setPushError(null);
+    setTestSent(false);
+    try {
+      await sendPushToUser(
+        currentUser.id,
+        'Test notification',
+        'Push notifications are working on this device 🎉',
+      );
+      setTestSent(true);
+      setTimeout(() => setTestSent(false), 4000);
+    } catch (err) {
+      console.error('[Push] test send failed:', err);
+      setPushError(err instanceof Error ? `Test failed: ${err.message}` : 'Test failed. See console for details.');
+    }
+    setTestingPush(false);
+  }
+
   async function unsubscribePush() {
     if (!currentUser) return;
     setLoadingPush(true);
@@ -354,6 +380,17 @@ export default function NotificationBell() {
                   {pushEnabled ? '🔔 Enabled on this device' : '🔕 Push disabled'}
                 </span>
                 <div className={styles.pushActions}>
+                  {pushEnabled && (
+                    <button
+                      type="button"
+                      className={styles.testBtn}
+                      onClick={sendTestPush}
+                      disabled={testingPush}
+                      title="Send a test push notification to this device"
+                    >
+                      {testingPush ? 'Sending…' : testSent ? 'Sent ✓' : 'Send test'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className={pushEnabled ? styles.pushBtnOff : styles.pushBtnOn}

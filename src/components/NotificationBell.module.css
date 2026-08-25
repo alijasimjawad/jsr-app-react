@@ -146,7 +146,7 @@
 .pushBtnOn:disabled,
 .pushBtnOff:disabled { opacity: 0.55; cursor: not-allowed; }
 
-/* ⚠️ Temporary test button — remove after verifying push end-to-end */
+/* "Send test" button — lets a user verify push works right after enabling it. */
 .testBtn {
   padding: 2px 8px;
   border-radius: 999px;
@@ -157,7 +157,8 @@
   font-weight: 600;
   cursor: pointer;
 }
-.testBtn:hover { border-color: #94A3B8; color: #475569; }
+.testBtn:hover:not(:disabled) { border-color: #94A3B8; color: #475569; }
+.testBtn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* ── Notification list ───────────────────────────────────────────────────────── */
 
