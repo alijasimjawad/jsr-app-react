@@ -1,0 +1,245 @@
+.page { padding: 24px; padding-bottom: 48px; }
+
+.heading { font-size: 17px; font-weight: 800; color: #1e293b; margin: 0 0 4px; }
+.subheading { font-size: 13px; color: #64748b; margin: 0 0 20px; }
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 800;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin: 28px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sectionTitle:first-of-type { margin-top: 0; }
+
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+
+.btnGhost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnGhost:hover { background: #f8fafc; }
+
+.btnPrimary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: #6366f1;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btnPrimary:hover { background: #4f46e5; }
+.btnPrimary:disabled { background: #c7d2fe; cursor: not-allowed; }
+
+/* ── Batch cards (leader distribute view + admin view) ───────────────── */
+.batchCard {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.batchHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+.batchLeader { font-size: 14px; font-weight: 800; color: #1e293b; }
+.batchMeta { font-size: 12px; color: #64748b; }
+.batchReason { font-size: 12px; color: #94a3b8; font-style: italic; }
+
+.progressWrap { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.progressBar {
+  width: 140px;
+  height: 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+.progressFill { height: 100%; background: #16a34a; border-radius: 4px; }
+.progressFillFull { background: #94a3b8; }
+.progressLabel { font-size: 12px; font-weight: 700; color: #334155; white-space: nowrap; }
+
+.batchBody { padding: 14px 18px; }
+
+.badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.badgeOpen { background: #dcfce7; color: #16a34a; }
+.badgeDone { background: #e2e8f0; color: #64748b; }
+
+/* ── Add-distribution inline form ────────────────────────────────────── */
+.entryForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.formField { display: flex; flex-direction: column; gap: 4px; }
+.formLabel { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .3px; }
+.formSel, .formInput {
+  height: 32px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  background: #fff;
+  color: #334155;
+}
+.formSel:focus, .formInput:focus { outline: none; border-color: #6366f1; }
+.formInput[type="text"] { min-width: 180px; }
+
+/* ── Table ────────────────────────────────────────────────────────────── */
+.tableWrap { overflow-x: auto; border-radius: 10px; border: 1px solid #e2e8f0; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table thead tr { background: #f8fafc; }
+.table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+.table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: middle;
+}
+.num { text-align: right; }
+.rowActions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.iconBtn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.iconBtnEdit { color: #2563eb; }
+.iconBtnEdit:hover { background: #eff6ff; }
+.iconBtnDelete { color: #dc2626; }
+.iconBtnDelete:hover { background: #fef2f2; }
+
+.empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 13px; }
+.errorMsg { padding: 40px; color: #ef4444; font-size: 14px; }
+
+/* ── Modal (new advance batch, admin) ────────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+.modalTitle { font-size: 16px; font-weight: 800; color: #1e293b; margin-bottom: 6px; }
+.modalSub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+.modalField { margin-bottom: 14px; }
+.modalLabel { font-size: 12px; font-weight: 600; color: #475569; display: block; margin-bottom: 6px; }
+.modalSel, .modalInput {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  color: #334155;
+  box-sizing: border-box;
+}
+.modalSel:focus, .modalInput:focus { outline: none; border-color: #6366f1; }
+.modalRow { display: flex; gap: 10px; }
+.modalRow > .modalField { flex: 1; }
+.modalActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.btnCancel {
+  font-size: 12px;
+  padding: 8px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btnCancel:hover { background: #f8fafc; }
+.btnApply {
+  font-size: 13px;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #6366f1;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btnApply:hover { background: #4f46e5; }
+.btnApply:disabled { background: #c7d2fe; cursor: not-allowed; }
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+}
+.toastOk { background: #16a34a; }
+.toastErr { background: #dc2626; }
