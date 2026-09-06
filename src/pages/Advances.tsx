@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { Fragment, useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -106,6 +106,9 @@ export default function Advances() {
     () => batches.filter(b => b.team_leader_id === myMemberId),
     [batches, myMemberId]
   );
+
+  // ── Admin: expand a batch row to see who it was distributed to ───────
+  const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null);
 
   // ── Admin: new advance batch ─────────────────────────────────────────
   const now = new Date();
@@ -272,20 +275,63 @@ export default function Advances() {
                   {batches.map(b => {
                     const remaining = remainingBalance(b, b.distributions);
                     const distributed = Number(b.total_amount) - remaining;
+                    const isExpanded = expandedBatchId === b.id;
                     return (
-                      <tr key={b.id}>
-                        <td>{memberName(b.team_leader_id)}</td>
-                        <td>{FIN_MONTHS[b.month - 1]} {b.year}</td>
-                        <td className={css.num}>{iqd(b.total_amount)}</td>
-                        <td className={css.num}>{iqd(distributed)}</td>
-                        <td className={css.num}>{iqd(remaining)}</td>
-                        <td>{b.reason || '—'}</td>
-                        <td>
-                          <div className={css.rowActions}>
-                            <button className={`${css.iconBtn} ${css.iconBtnDelete}`} onClick={() => removeAdvance(b.id)}>Delete</button>
-                          </div>
-                        </td>
-                      </tr>
+                      <Fragment key={b.id}>
+                        <tr
+                          className={`${css.tableRow} ${isExpanded ? css.tableRowExpanded : ''}`}
+                          onClick={() => setExpandedBatchId(isExpanded ? null : b.id)}
+                        >
+                          <td>{memberName(b.team_leader_id)}</td>
+                          <td>{FIN_MONTHS[b.month - 1]} {b.year}</td>
+                          <td className={css.num}>{iqd(b.total_amount)}</td>
+                          <td className={css.num}>{iqd(distributed)}</td>
+                          <td className={css.num}>{iqd(remaining)}</td>
+                          <td>{b.reason || '—'}</td>
+                          <td>
+                            <div className={css.rowActions}>
+                              <button
+                                className={`${css.iconBtn} ${css.iconBtnDelete}`}
+                                onClick={e => { e.stopPropagation(); removeAdvance(b.id); }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${b.id}-detail`}>
+                            <td colSpan={7} className={css.expandCell}>
+                              <div className={css.detailPanel}>
+                                {b.distributions.length === 0 ? (
+                                  <div className={css.empty}>Nothing distributed from this batch yet.</div>
+                                ) : (
+                                  <table className={css.detailTable}>
+                                    <thead className={css.detailTableHead}>
+                                      <tr>
+                                        <th>Recipient</th>
+                                        <th>Date</th>
+                                        <th>Details</th>
+                                        <th style={{ textAlign: 'right' }}>Amount</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {b.distributions.map(d => (
+                                        <tr key={d.id}>
+                                          <td>{memberName(d.member_id)}</td>
+                                          <td>{d.entry_date}</td>
+                                          <td>{d.details || '—'}</td>
+                                          <td style={{ textAlign: 'right' }}>{iqd(d.amount)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
