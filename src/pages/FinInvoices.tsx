@@ -381,6 +381,11 @@ export default function FinInvoices() {
   // the auto-computed value from percentage.
   const [lineAmountOverride, setLineAmountOverride] = useState<Record<string, number>>({});
 
+  // Per-line override for the auto-generated "Site implementation — {site}"
+  // description text. Keyed by revenue_id, same as lineAmountOverride.
+  // Empty/absent → falls back to the auto text.
+  const [lineDescOverride, setLineDescOverride] = useState<Record<string, string>>({});
+
   // ── Payment modal ─────────────────────────────────────────
   const [payModal,    setPayModal]    = useState(false);
   const [payInvId,    setPayInvId]    = useState<string | null>(null);
@@ -536,7 +541,7 @@ export default function FinInvoices() {
       return {
         site_id: r.site_id,
         section_name: r.section_name || '',
-        description: `Site implementation — ${r.site_id}`,
+        description: lineDescOverride[r.id]?.trim() || `Site implementation — ${r.site_id}`,
         amount: amt,
         revenue_id: r.id,
         _commercialValue: commercial,
@@ -771,6 +776,7 @@ export default function FinInvoices() {
     setShowCustForm(false);
     setCustForm({ site: '', desc: '', amt: '' });
     setLineAmountOverride({});
+    setLineDescOverride({});
     setPickerStatus('Select a project first');
     if (id) {
       const inv = invoices.find(x => x.id === id);
@@ -798,10 +804,20 @@ export default function FinInvoices() {
       // amounts so the modal renders the exact stored figures (not the
       // freshly-derived milestone default), then load the picker.
       const overrideMap: Record<string, number> = {};
+      const descMap: Record<string, string> = {};
       for (const it of revItems) {
-        if (it.revenue_id) overrideMap[it.revenue_id] = +(it.amount || 0);
+        if (!it.revenue_id) continue;
+        overrideMap[it.revenue_id] = +(it.amount || 0);
+        // Only carry the persisted description forward as an "override" if
+        // it differs from the default auto text — otherwise every edit
+        // would look pre-overridden even when the user never touched it.
+        const defaultDesc = `Site implementation — ${it.site_id}`;
+        if (it.description && it.description !== defaultDesc) {
+          descMap[it.revenue_id] = it.description;
+        }
       }
       setLineAmountOverride(overrideMap);
+      setLineDescOverride(descMap);
       if (inv?.project_name) {
         await loadPickerForProject(inv.project_name, id, false, inv?.po_id || null);
         setCheckedRevs(new Set(revItems.map(x => x.revenue_id!).filter(Boolean)));
@@ -829,6 +845,7 @@ export default function FinInvoices() {
     setCustomItems([]);
     setShowCustForm(false);
     setLineAmountOverride({});
+    setLineDescOverride({});
     setPickerStatus('Select a project first');
     const year  = new Date().getFullYear();
     const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
@@ -1431,6 +1448,7 @@ export default function FinInvoices() {
                     }));
                     setCheckedRevs(new Set());
                     setLineAmountOverride({});
+                    setLineDescOverride({});
                     const proj = (!invEditId && po?.project_name) ? po.project_name : invForm.project;
                     if (proj) loadPickerForProject(proj, invEditId, false, newPoId || null);
                   }}>
@@ -1450,13 +1468,14 @@ export default function FinInvoices() {
                 </select>
               </div>
               <div className={css.formField}>
-                <label>Project {selectedPO ? '(locked to PO)' : ''}</label>
-                <select className={css.formSel} value={invForm.project} disabled={!!selectedPO && !invEditId}
+                <label>Project {selectedPO && !invEditId ? '(auto-filled from PO — change if needed)' : ''}</label>
+                <select className={css.formSel} value={invForm.project}
                   onChange={e => {
                     const p = e.target.value;
                     setInvForm(f => ({ ...f, project: p }));
                     setCheckedRevs(new Set());
                     setLineAmountOverride({});
+                    setLineDescOverride({});
                     loadPickerForProject(p, invEditId, false, invForm.poId || null);
                   }}>
                   <option value="">— Select —</option>
@@ -1858,6 +1877,7 @@ export default function FinInvoices() {
                     <thead><tr>
                       <th>Site ID</th>
                       <th>Section</th>
+                      <th>Description</th>
                       <th className={css.num}>Commercial</th>
                       <th className={css.num}>Prev. Invoiced</th>
                       <th className={css.num}>Remaining Before</th>
@@ -1874,10 +1894,19 @@ export default function FinInvoices() {
                         const amount     = +(li.amount || 0);
                         const pctDisplay = li._invoicePercent || 0;
                         const remAfter   = commercial - prev - amount; // raw — may go negative to flag over-bill
+                        const defaultDesc = `Site implementation — ${li.site_id}`;
                         return (
                           <tr key={key}>
                             <td style={{ fontWeight: 600 }}>{String(li.site_id || '—')}</td>
                             <td style={{ color: '#64748b' }}>{li.section_name || '—'}</td>
+                            <td>
+                              <input type="text"
+                                className={css.formInput}
+                                style={{ width: 160, fontSize: 11, padding: '3px 6px' }}
+                                placeholder={defaultDesc}
+                                value={lineDescOverride[key] ?? ''}
+                                onChange={e => setLineDescOverride(o => ({ ...o, [key]: e.target.value }))} />
+                            </td>
                             <td className={css.num}>{iqd(commercial)}</td>
                             <td className={css.num} style={{ color: '#64748b' }}>{iqd(prev)}</td>
                             <td className={css.num}>{iqd(remBefore)}</td>
