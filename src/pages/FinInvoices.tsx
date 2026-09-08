@@ -388,6 +388,15 @@ export default function FinInvoices() {
   // Empty/absent → falls back to the auto text.
   const [lineDescOverride, setLineDescOverride] = useState<Record<string, string>>({});
 
+  // Tracks the project name the revenue/site picker is currently loaded
+  // for. The Project field is free text now (so the printed name can be
+  // customized per customer request), but re-querying revenue rows on
+  // every rename would wipe the already-selected sites whenever the typed
+  // text doesn't exactly match a project in the database. We only reload
+  // the picker when the field actually settles on a *different known*
+  // project — a cosmetic rename is left alone.
+  const loadedProjectRef = useRef<string>('');
+
   // ── Payment modal ─────────────────────────────────────────
   const [payModal,    setPayModal]    = useState(false);
   const [payInvId,    setPayInvId]    = useState<string | null>(null);
@@ -601,6 +610,7 @@ export default function FinInvoices() {
     poId: string | null = null,
   ) {
     if (!project) {
+      loadedProjectRef.current = '';
       setRevSites([]);
       setFullyBilledIds(new Set());
       setMissingValueIds(new Set());
@@ -608,6 +618,7 @@ export default function FinInvoices() {
       setPickerStatus('Select a project first');
       return;
     }
+    loadedProjectRef.current = project;
     setPickerLoad(true);
     setPickerStatus('Loading sites…');
     const { data } = await supabase.from('revenue').select('*').eq('project_name', project).order('section_name').order('site_id');
@@ -1485,6 +1496,24 @@ export default function FinInvoices() {
                   }}
                   onBlur={e => {
                     const p = e.target.value.trim();
+                    // No actual change — nothing to reload.
+                    if (p === loadedProjectRef.current) return;
+                    // Cleared the field entirely: reset the picker to its
+                    // empty "select a project" state.
+                    if (!p) {
+                      setCheckedRevs(new Set());
+                      setLineAmountOverride({});
+                      setLineDescOverride({});
+                      loadPickerForProject('', invEditId, false, invForm.poId || null);
+                      return;
+                    }
+                    // Only re-query revenue rows (and reset the picked
+                    // sites) when the field settled on a genuinely
+                    // different *known* project. A cosmetic rename — text
+                    // typed for the printed invoice that doesn't match any
+                    // real project — is left alone so it doesn't wipe the
+                    // sites/overrides already selected.
+                    if (!FIN_PROJECTS.includes(p)) return;
                     setCheckedRevs(new Set());
                     setLineAmountOverride({});
                     setLineDescOverride({});
