@@ -53,6 +53,7 @@ interface Invoice {
   invoice_number: string | null;
   client_id: string;
   project_name: string | null;
+  project_code: string | null;
   status: string;
   issue_date: string | null;
   due_date: string | null;
@@ -261,6 +262,7 @@ function buildPrintModel(
     issue_date:                  inv.issue_date,
     due_date:                    inv.due_date,
     project_name:                inv.project_name,
+    project_code:                inv.project_code,
     currency,
     milestone_label:             inv.milestone_label,
     milestone_percent:           inv.milestone_percent,
@@ -338,7 +340,7 @@ export default function FinInvoices() {
   const [invModal,     setInvModal]     = useState(false);
   const [invEditId,    setInvEditId]    = useState<string | null>(null);
   const [invForm,      setInvForm]      = useState({
-    clientId: '', number: '', project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
+    clientId: '', number: '', project: '', projectCode: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
     poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
   });
   const [revSites,     setRevSites]     = useState<RevRow[]>([]);
@@ -784,6 +786,7 @@ export default function FinInvoices() {
         clientId:         inv?.client_id                     || '',
         number:           inv?.invoice_number                || '',
         project:          inv?.project_name                  || '',
+        projectCode:      inv?.project_code                  || '',
         status:           inv?.status                        || 'Draft',
         issueDate:        inv?.issue_date                    || today,
         dueDate:          inv?.due_date                      || '',
@@ -827,7 +830,7 @@ export default function FinInvoices() {
       const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
       setInvForm({
         clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
-        project: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
+        project: '', projectCode: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
         poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
       });
     }
@@ -851,7 +854,7 @@ export default function FinInvoices() {
     const count = invoices.filter(i => i.invoice_number?.startsWith(`${BRAND.invoicePrefix}-${year}-`)).length + 1;
     setInvForm({
       clientId: '', number: `${BRAND.invoicePrefix}-${year}-${String(count).padStart(3, '0')}`,
-      project: projectName, status: 'Draft', issueDate: today, dueDate: '', notes: '',
+      project: projectName, projectCode: '', status: 'Draft', issueDate: today, dueDate: '', notes: '',
       poId: '', milestoneLabel: '', milestonePercent: '', discount: '0', tax: '0',
     });
     setInvModal(true);
@@ -986,6 +989,7 @@ export default function FinInvoices() {
       client_id:         invForm.clientId,
       invoice_number:    invForm.number.trim(),
       project_name:      invForm.project || null,
+      project_code:      invForm.projectCode.trim() || null,
       issue_date:        invForm.issueDate,
       due_date:          invForm.dueDate || null,
       status:            invForm.status || 'Draft',
@@ -1468,19 +1472,34 @@ export default function FinInvoices() {
                 </select>
               </div>
               <div className={css.formField}>
-                <label>Project {selectedPO && !invEditId ? '(auto-filled from PO — change if needed)' : ''}</label>
-                <select className={css.formSel} value={invForm.project}
+                <label>Project {selectedPO && !invEditId ? '(auto-filled from PO — type to change)' : ''}</label>
+                <input className={css.formInput} list="fin-project-suggestions" placeholder="Type or pick a project…"
+                  value={invForm.project}
                   onChange={e => {
+                    // Just update the text as the user types — reloading the
+                    // site picker on every keystroke would fire a Supabase
+                    // query per character. The picker refreshes on blur/Enter
+                    // instead, once the project name has settled.
                     const p = e.target.value;
                     setInvForm(f => ({ ...f, project: p }));
+                  }}
+                  onBlur={e => {
+                    const p = e.target.value.trim();
                     setCheckedRevs(new Set());
                     setLineAmountOverride({});
                     setLineDescOverride({});
                     loadPickerForProject(p, invEditId, false, invForm.poId || null);
-                  }}>
-                  <option value="">— Select —</option>
-                  {FIN_PROJECTS.filter(p => p !== 'General').map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} />
+                <datalist id="fin-project-suggestions">
+                  {FIN_PROJECTS.filter(p => p !== 'General').map(p => <option key={p} value={p} />)}
+                </datalist>
+              </div>
+              <div className={css.formField}>
+                <label>Project Code</label>
+                <input className={css.formInput} placeholder="Optional — e.g. PC-00142" maxLength={40}
+                  value={invForm.projectCode}
+                  onChange={e => setInvForm(f => ({ ...f, projectCode: e.target.value }))} />
               </div>
               <div className={css.formField}>
                 <label>Status</label>
@@ -2083,7 +2102,7 @@ export default function FinInvoices() {
               </span>
             </div>
             <div className={css.detailMeta}>
-              <strong>{detailClient?.company_name || '—'}</strong> &nbsp;·&nbsp; {detailInv.project_name || '—'} &nbsp;·&nbsp; Issued: {detailInv.issue_date || '—'} &nbsp;·&nbsp; Due: {detailInv.due_date || '—'}
+              <strong>{detailClient?.company_name || '—'}</strong> &nbsp;·&nbsp; {detailInv.project_name || '—'}{detailInv.project_code ? ` (${detailInv.project_code})` : ''} &nbsp;·&nbsp; Issued: {detailInv.issue_date || '—'} &nbsp;·&nbsp; Due: {detailInv.due_date || '—'}
               {(() => {
                 const po = detailInv.po_id ? purchaseOrders.find(p => p.id === detailInv.po_id) : undefined;
                 const parts: string[] = [];

@@ -180,6 +180,12 @@ function PartiesAndPO({ m }: { m: InvoicePrintModel }) {
             <Text style={styles.pdK}>Project</Text>
             <Text style={styles.pdV}>{m.project_name || ''}</Text>
           </View>
+          {m.project_code ? (
+            <View style={styles.pdRow}>
+              <Text style={styles.pdK}>Project Code</Text>
+              <Text style={styles.pdV}>{m.project_code}</Text>
+            </View>
+          ) : null}
           {p ? (
             <>
               <View style={styles.pdRow}>

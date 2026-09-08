@@ -76,6 +76,7 @@ export interface InvoicePrintModel {
   issue_date: string | null;
   due_date: string | null;
   project_name: string | null;
+  project_code: string | null;
   currency: string;                 // fallback 'IQD' when caller has no explicit currency
 
   // Milestone
@@ -262,6 +263,9 @@ function buildPartiesAndPO(m: InvoicePrintModel): string {
 
   const rightRows: string[] = [];
   rightRows.push(`<div><span class="pd-k">Project</span><span class="pd-v">${escapeHtml(m.project_name)}</span></div>`);
+  if (m.project_code) {
+    rightRows.push(`<div><span class="pd-k">Project Code</span><span class="pd-v">${escapeHtml(m.project_code)}</span></div>`);
+  }
   if (p) {
     rightRows.push(`<div><span class="pd-k">PO Number</span><span class="pd-v">${escapeHtml(p.po_number)}</span></div>`);
     rightRows.push(`<div><span class="pd-k">PO Date</span><span class="pd-v">${escapeHtml(p.po_date)}</span></div>`);
