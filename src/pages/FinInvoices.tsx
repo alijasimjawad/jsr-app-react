@@ -621,8 +621,28 @@ export default function FinInvoices() {
     loadedProjectRef.current = project;
     setPickerLoad(true);
     setPickerStatus('Loading sites…');
-    const { data } = await supabase.from('revenue').select('*').eq('project_name', project).order('section_name').order('site_id');
-    const sites: RevRow[] = (data || []) as RevRow[];
+    // Fetch by project_name as before, but when a PO is bound also fetch by
+    // po_id and merge. A PO's own project_name can be a PO-specific label
+    // (e.g. "Baghdad-Zain -PO#11879 Redeploy Ericsson R") that doesn't
+    // literally match the project_name stored on the revenue rows it's
+    // already mapped to — without this, sites that are genuinely tied to
+    // the PO (and count toward "Mapped Site Value") would silently vanish
+    // from the picker.
+    let sites: RevRow[];
+    if (poId) {
+      const [byProject, byPo] = await Promise.all([
+        supabase.from('revenue').select('*').eq('project_name', project).order('section_name').order('site_id'),
+        supabase.from('revenue').select('*').eq('po_id', poId).order('section_name').order('site_id'),
+      ]);
+      const merged = new Map<string, RevRow>();
+      for (const r of (byProject.data || []) as RevRow[]) merged.set(r.id, r);
+      for (const r of (byPo.data || []) as RevRow[]) merged.set(r.id, r);
+      sites = Array.from(merged.values()).sort((a, b) =>
+        (a.section_name || '').localeCompare(b.section_name || '') || (a.site_id || '').localeCompare(b.site_id || ''));
+    } else {
+      const { data } = await supabase.from('revenue').select('*').eq('project_name', project).order('section_name').order('site_id');
+      sites = (data || []) as RevRow[];
+    }
     setRevSites(sites);
 
     // Classify every row (siteBillingStatus is pure — no extra queries).
