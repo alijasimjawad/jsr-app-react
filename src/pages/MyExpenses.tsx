@@ -14,6 +14,13 @@ const PAGE_SIZES = [10, 25, 50];
 
 const ACTIVITY_TYPES = ['Installation', 'Integration', 'Clearance', 'Photo Reports', 'Other'];
 
+// Iraq's 18 governorates, for the Governorate field dropdown.
+const IRAQ_GOVERNORATES = [
+  '', 'Baghdad', 'Basra', 'Nineveh', 'Erbil', 'Najaf', 'Karbala', 'Kirkuk',
+  'Sulaymaniyah', 'Anbar', 'Babil', 'Diyala', 'Dhi Qar', 'Al-Qadisiyyah',
+  'Maysan', 'Muthanna', 'Salah ad-Din', 'Wasit', 'Duhok',
+];
+
 interface SectionRow {
   id: string;
   section_label: string | null;
@@ -27,6 +34,7 @@ interface ExpenseClaim {
   submitted_at: string;
   project_name: string | null;
   site_id: string | null;
+  governorate: string | null;
   section_id: string | null;
   section_label: string | null;
   description: string | null;
@@ -119,6 +127,7 @@ export default function MyExpenses() {
   // form fields
   const [fProject, setFProject] = useState('');
   const [fSiteId, setFSiteId] = useState('');
+  const [fGovernorate, setFGovernorate] = useState('');
   const [fActivityType, setFActivityType] = useState('');
   const [fOtherDesc, setFOtherDesc] = useState('');
   const [fDate, setFDate] = useState(today());
@@ -135,6 +144,8 @@ export default function MyExpenses() {
   const [sections, setSections] = useState<SectionRow[]>([]);
   const [fSectionId, setFSectionId] = useState('');
   const pendingSectionRef = useRef<string | null>(null);
+  const pendingGovernorateRef = useRef<string | null>(null);
+  const [siteDataMap, setSiteDataMap] = useState<Record<string, Record<string, unknown>>>({});
   const [fieldErrs, setFieldErrs] = useState<Record<string, string>>({});
   const [projectNames, setProjectNames] = useState<string[]>([]);
   const [nameToKey, setNameToKey] = useState<Record<string, string>>({});
@@ -230,6 +241,39 @@ export default function MyExpenses() {
       .then(({ data }) => setSections((data as SectionRow[]) || []));
   }, [fProject, nameToKey]);
 
+  // ── Site data load on section change (for governorate auto-fill) ──
+  useEffect(() => {
+    setSiteDataMap({});
+    const restoreGov = pendingGovernorateRef.current;
+    pendingGovernorateRef.current = null;
+    setFGovernorate(restoreGov || '');
+    if (!fSectionId) return;
+    (async () => {
+      const { data: secData } = await supabase.from('sections').select('columns').eq('id', fSectionId).single();
+      const columns: string[] = secData?.columns || [];
+      const siteIdCol = columns[0] || 'Site ID';
+      const { data: rowsData } = await supabase.from('rows')
+        .select('data').eq('section_id', fSectionId).order('row_order', { ascending: true });
+      const map: Record<string, Record<string, unknown>> = {};
+      (rowsData || []).forEach((r: { data: Record<string, unknown> }) => {
+        if (!r.data) return;
+        const val = String(r.data[siteIdCol] ?? '').trim();
+        if (val && val !== 'undefined' && val !== 'null') map[val] = r.data;
+      });
+      setSiteDataMap(map);
+    })();
+  }, [fSectionId]);
+
+  function autoFillGovernorate(siteId: string) {
+    const rowData = siteDataMap[siteId];
+    if (!rowData) return;
+    const govKey = Object.keys(rowData).find(k => /^gov(ernate|ernorate)?$/i.test(k));
+    if (govKey) {
+      const val = String(rowData[govKey] ?? '').trim();
+      if (val) setFGovernorate(val);
+    }
+  }
+
   const summary = useMemo(() => {
     const approved = claims.filter(c => c.status === 'approved');
     const pending  = claims.filter(c => c.status === 'pending');
@@ -274,9 +318,10 @@ export default function MyExpenses() {
 
   function openNew() {
     pendingSectionRef.current = null;
-    setEditId(null); setFProject(''); setFSiteId(''); setFDate(today());
+    pendingGovernorateRef.current = null;
+    setEditId(null); setFProject(''); setFSiteId(''); setFGovernorate(''); setFDate(today());
     setFTransport(''); setFFood(''); setFExtra([]); setFNotes(''); setFEmployeeIds([]);
-    setSections([]); setFSectionId('');
+    setSections([]); setFSectionId(''); setSiteDataMap({});
     setFActivityType(''); setFOtherDesc('');
     setFormErr(''); setFieldErrs({}); setQuickOpen(false); setEmpDropOpen(false);
     setDetailClaim(null); setFormOpen(true);
@@ -284,7 +329,9 @@ export default function MyExpenses() {
 
   function openEdit(c: ExpenseClaim) {
     pendingSectionRef.current = c.section_id ?? null;
+    pendingGovernorateRef.current = c.governorate ?? null;
     setEditId(c.id); setFProject(c.project_name ?? ''); setFSiteId(c.site_id ?? '');
+    setFGovernorate(c.governorate ?? '');
     setFDate(c.activity_date ?? today());
     setFTransport(c.transport_amount != null ? String(c.transport_amount) : '');
     setFFood(c.food_amount != null ? String(c.food_amount) : '');
@@ -332,6 +379,7 @@ export default function MyExpenses() {
     setSaving(true);
     const payload = {
       member_id: memberId, project_name: fProject, site_id: fSiteId.trim(),
+      governorate: fGovernorate.trim() || null,
       section_id: fSectionId || null, section_label: finalSectionLabel,
       description: finalDesc, activity_date: fDate,
       transport_amount: parseFloat(fTransport) || 0,
@@ -574,6 +622,7 @@ export default function MyExpenses() {
                         <div className={styles.detailItem}><span className={styles.detailKey}>{t('exp_project')}</span><span className={styles.detailVal}>{detailClaim.project_name ?? '—'}</span></div>
                         <div className={styles.detailItem}><span className={styles.detailKey}>{t('exp_section')}</span><span className={styles.detailVal}>{detailClaim.section_label ?? '—'}</span></div>
                         <div className={styles.detailItem}><span className={styles.detailKey}>{t('exp_siteId')}</span><span className={`${styles.detailVal} ${styles.siteCode}`}>{detailClaim.site_id ?? '—'}</span></div>
+                        <div className={styles.detailItem}><span className={styles.detailKey}>{t('exp_governorate')}</span><span className={styles.detailVal}>{detailClaim.governorate ?? '—'}</span></div>
                       </div>
                       <div className={styles.detailItemFull}><span className={styles.detailKey}>{t('exp_colDesc')}</span><span className={styles.detailVal}>{detailClaim.description ?? '—'}</span></div>
                     </div>
@@ -705,9 +754,25 @@ export default function MyExpenses() {
                           placeholder={t('exp_siteIdPlaceholder')}
                           value={fSiteId}
                           onChange={e => { setFSiteId(e.target.value); setFieldErrs(p => ({ ...p, siteId: '' })); }}
+                          onBlur={e => autoFillGovernorate(e.target.value.trim())}
                         />
                         {fieldErrs.siteId && <span className={styles.fieldErrMsg}>{fieldErrs.siteId}</span>}
                       </div>
+                      <div className={styles.fieldGroup}>
+                        <label className={styles.fieldLabel}>{t('exp_governorate')}</label>
+                        <select
+                          className={styles.select}
+                          value={fGovernorate}
+                          onChange={e => setFGovernorate(e.target.value)}
+                        >
+                          {IRAQ_GOVERNORATES.map(g => <option key={g} value={g}>{g || t('exp_selectGovernorate')}</option>)}
+                          {fGovernorate && !IRAQ_GOVERNORATES.includes(fGovernorate) && (
+                            <option value={fGovernorate}>{fGovernorate}</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    <div className={styles.formGrid2}>
                       <div className={styles.fieldGroup}>
                         <label className={styles.fieldLabel}>{t('exp_activityType')} <span className={styles.req}>*</span></label>
                         <select
