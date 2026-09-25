@@ -8,6 +8,7 @@ import css from './BackupRestore.module.css';
 const BACKUP_TABLES = [
   'users', 'sections', 'rows', 'activity_log', 'general_expenses',
   'team_members', 'revenue', 'project_expenses', 'expense_claims', 'employee_documents',
+  'money_disbursements',
 ] as const;
 
 const GDRIVE_URL = 'https://drive.google.com/drive/folders/1Iboi8xSHJkF4KcPVptkcIj2AznMO-CRJ?usp=share_link';

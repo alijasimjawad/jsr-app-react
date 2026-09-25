@@ -731,6 +731,7 @@ function AdminNavGroup({ isExpanded, onToggle }: NavGroupProps) {
   const ADMIN_LINKS = [
     ...VIEW_ADMIN.filter(({ key }) => hasPerm(key)),
     ...(isAdmin ? [{ key: 'partner_capital', to: '/partner-capital', label: 'Partner Capital' }] : []),
+    ...(isAdmin ? [{ key: 'money_out', to: '/money-out', label: 'Money Out' }] : []),
     ...(isAdmin ? [{ key: 'user_management', to: '/user-management', label: 'User Management' }] : []),
     ...(isAdmin ? [{ key: 'backup_restore', to: '/backup-restore', label: 'Backup & Restore' }] : []),
   ];

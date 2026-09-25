@@ -32,6 +32,7 @@ import FinCars from './pages/FinCars';
 import FinPayslips from './pages/FinPayslips';
 import Advances from './pages/Advances';
 import PartnerCapital from './pages/PartnerCapital';
+import FinMoneyOut from './pages/FinMoneyOut';
 import FinPerformance from './pages/FinPerformance';
 import ActivityLog from './pages/ActivityLog';
 import UserManagement from './pages/UserManagement';
@@ -119,6 +120,7 @@ export default function App() {
             <Route path="/finance/performance"        element={<FinPerformance />} />
             <Route path="/activity-log"              element={<ActivityLog />} />
             <Route path="/partner-capital"            element={<PartnerCapital />} />
+            <Route path="/money-out"                   element={<FinMoneyOut />} />
             <Route path="/user-management"           element={<UserManagement />} />
             <Route path="/backup-restore"            element={<BackupRestore />} />
             <Route path="/dashboard"                 element={<Dashboard />} />
