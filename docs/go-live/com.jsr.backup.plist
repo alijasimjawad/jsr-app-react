@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hourly backup for jsr-app-react (new Supabase project).
+
+  Install (see chat instructions for the full walkthrough):
+    cp docs/go-live/com.jsr.backup.plist ~/Library/LaunchAgents/com.jsr.backup.plist
+    launchctl load ~/Library/LaunchAgents/com.jsr.backup.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.jsr.backup.plist
+    rm ~/Library/LaunchAgents/com.jsr.backup.plist
+
+  Before installing, replace the two /Users/alijasim/Desktop/jsr-app-react
+  paths below if your checkout lives somewhere else, and confirm the PATH
+  entry actually contains your `node`/`npx` — run `which npx` in Terminal
+  and add its directory to PATH below if it's missing.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jsr.backup</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>npx</string>
+    <string>tsx</string>
+    <string>scripts/backup.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/alijasim/Desktop/jsr-app-react</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/opt/node/bin</string>
+  </dict>
+
+  <!-- Runs every hour, on the hour (StartInterval = 3600 seconds also works
+       and is simpler, but StartCalendarInterval survives sleep/wake more
+       predictably on laptops). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/alijasim/Desktop/jsr-app-react/scripts/backup.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/alijasim/Desktop/jsr-app-react/scripts/backup.error.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
