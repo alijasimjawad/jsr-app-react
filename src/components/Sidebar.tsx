@@ -326,17 +326,32 @@ function NetworkScopesTree() {
       const res = await supabase.from('sections').delete().eq('id', secId);
       saveErr = res.error;
     } else if (!secId) {
-      // Default section with no DB row yet — insert it directly as deleted
-      const res = await supabase.from('sections').insert({
-        project_name: deleteSecState.proj,
-        section_name: deleteSecState.key,
-        section_label: deleteSecState.label,
-        columns: DEFAULT_HEADERS,
-        custom_columns: [],
-        is_custom: false,
-        is_deleted: true,
-      });
-      saveErr = res.error;
+      // Default section with no row in the local cache. Upsert on the
+      // (project_name, section_name) unique key so this works whether or not
+      // the row already exists in the DB (e.g. just auto-seeded for a new
+      // project and not yet reflected in the cache) — a plain insert hit
+      // "sections_project_section_unique" in that case.
+      // Update first so an existing row's columns aren't overwritten; only
+      // insert when nothing matched.
+      const upd = await supabase.from('sections')
+        .update({ is_deleted: true })
+        .eq('project_name', deleteSecState.proj)
+        .eq('section_name', deleteSecState.key)
+        .select('id');
+      if (upd.error) {
+        saveErr = upd.error;
+      } else if (!upd.data || upd.data.length === 0) {
+        const res = await supabase.from('sections').insert({
+          project_name: deleteSecState.proj,
+          section_name: deleteSecState.key,
+          section_label: deleteSecState.label,
+          columns: DEFAULT_HEADERS,
+          custom_columns: [],
+          is_custom: false,
+          is_deleted: true,
+        });
+        saveErr = res.error;
+      }
     } else {
       const res = await supabase.from('sections').update({ is_deleted: true }).eq('id', secId);
       saveErr = res.error;
