@@ -340,94 +340,120 @@ export default function FinReport() {
   }
 
   // ── Export ───────────────────────────────────────────────────
+  // Multi-sheet, fully detailed workbook. Figures match what's on screen
+  // (salaries include adjustments). Detail sheets pull the full month's
+  // rows straight from the DB so every line item appears.
   async function handleExport() {
-    const XLSX = (await import('xlsx')).default;
-    // Recompute independently (old app behavior — no adjustments applied in export)
-    const expRevMap: Record<string, number> = {};
-    allRev.filter(r => r.month === month && r.year === year).forEach(r => {
-      if (r.project_name) expRevMap[r.project_name] = (expRevMap[r.project_name] || 0) + currentRevenueOf(r);
-    });
-    const expProjs = [
-      ...FIN_PROJECTS.filter(p => (expRevMap[p] ?? 0) > 0),
-      ...Object.keys(expRevMap).filter(p => !FIN_PROJECTS.includes(p) && expRevMap[p] > 0),
-    ];
-    const expTotalRev = expProjs.reduce((s, p) => s + (expRevMap[p] || 0), 0);
+    try {
+      const XLSX = await import('xlsx');
 
-    const exLast     = new Date(year, month, 0);
-    const exFirstStr = `${year}-${String(month).padStart(2, '0')}-01`;
-    const exLastStr  = `${year}-${String(month).padStart(2, '0')}-${String(exLast.getDate()).padStart(2, '0')}`;
-    const totalCalDays = exLast.getDate();
-    const exTeam = team.filter(t => {
-      if (!t.activated_at) return t.is_active !== false;
-      const act = new Date(t.activated_at + 'T00:00:00');
-      if (act > exLast) return false;
-      if (t.deactivated_at) { const deact = new Date(t.deactivated_at + 'T00:00:00'); if (deact < new Date(year, month - 1, 1)) return false; }
-      return true;
-    }).map(t => {
-      const actStr   = (t.activated_at && t.activated_at > exFirstStr) ? t.activated_at : exFirstStr;
-      const deactStr = (t.deactivated_at && t.deactivated_at < exLastStr) ? t.deactivated_at : exLastStr;
-      const daysActive     = Math.round((new Date(deactStr + 'T00:00:00').getTime() - new Date(actStr + 'T00:00:00').getTime()) / 86400000) + 1;
-      const proratedSalary = Math.round((+(t.monthly_salary ?? 0)) / totalCalDays * daysActive);
-      return { ...t, daysActive, totalCalDays, proratedSalary };
-    });
-    const expTotalSal = exTeam.reduce((s, t) => s + t.proratedSalary, 0);
+      // Detail rows for the selected month
+      const [genRes, projRes] = await Promise.all([
+        supabase.from('general_expenses').select('*').eq('month', month).eq('year', year).order('expense_date'),
+        supabase.from('project_expenses').select('*').order('expense_date'),
+      ]);
+      const genRows = (genRes.data || []) as Record<string, unknown>[];
+      const projRowsRaw = ((projRes.data || []) as Record<string, unknown>[]).filter(r => {
+        const ad = r.activity_date as string | null;
+        if (ad) { const d = new Date(ad); return d.getMonth() + 1 === month && d.getFullYear() === year; }
+        return r.month === month && r.year === year;
+      });
 
-    const expTotalGenExp = allGen.filter(r => r.month === month && r.year === year).reduce((s, r) => s + (+(r.amount ?? 0)), 0);
-    const expProjExpMap: Record<string, number> = {};
-    allProj.filter(r => {
-      if (r.activity_date) { const d = new Date(r.activity_date); return d.getMonth() + 1 === month && d.getFullYear() === year; }
-      return r.month === month && r.year === year;
-    }).forEach(r => { const k = r.project_name || '__unassigned__'; expProjExpMap[k] = (expProjExpMap[k] || 0) + (+(r.amount ?? 0)); });
-    const expTotalProjExp = (Object.values(expProjExpMap) as number[]).reduce((s, v) => s + v, 0);
-    const expCompanyNet = expTotalRev - expTotalSal - expTotalGenExp - expTotalProjExp;
+      const num = (v: unknown) => +(v as number ?? 0) || 0;
+      const totalProjectRowsAmt = projRowsRaw.reduce((s, r) => s + num(r.amount), 0);
+      const totalGenRowsAmt = genRows.reduce((s, r) => s + num(r.amount), 0);
+      const sumSalaryBase     = teamWithSalary.reduce((s, t) => s + num(t.monthly_salary), 0);
+      const sumSalaryProrated = teamWithSalary.reduce((s, t) => s + t.proratedSalary, 0);
 
-    const expProjRows = expProjs.map(proj => {
-      const revenue    = expRevMap[proj] || 0;
-      const weight     = expTotalRev > 0 ? revenue / expTotalRev : 0;
-      const salaryCost = Math.round(expTotalSal * weight);
-      const projExp    = expProjExpMap[proj] || 0;
-      const netProfit  = revenue - salaryCost - projExp;
-      return { proj, revenue, weight, salaryCost, projExp, netProfit, margin: revenue > 0 ? (netProfit / revenue * 100) : 0 };
-    });
+      // ── Sheet 1: Summary ──
+      const s1: (string | number)[][] = [];
+      s1.push([`Monthly Financial Report — ${FIN_MONTHS[month - 1]} ${year}`]);
+      s1.push([]);
+      s1.push(['COMPANY SUMMARY']);
+      s1.push(['Total Revenue (IQD)', totalRevenue]);
+      s1.push(['Total Salary after adjustments (IQD)', totalSalaryBudget]);
+      s1.push(['General Expenses (IQD)', totalGenExp]);
+      s1.push(['Project Expenses (IQD)', totalProjExp]);
+      s1.push(['Net Profit (IQD)', companyNet]);
+      s1.push([]);
+      s1.push(['REVENUE BY PROJECT']);
+      s1.push(['Project', 'Revenue (IQD)', 'Weight %']);
+      projRows.forEach(r => s1.push([r.proj, r.revenue, pct(r.weight * 100)]));
+      s1.push(['TOTAL', totalRevenue, '100.0%']);
+      s1.push([]);
+      s1.push(['SALARY DISTRIBUTION (by revenue weight)']);
+      s1.push(['Project', 'Weight %', 'Salary Cost (IQD)']);
+      projRows.forEach(r => s1.push([r.proj, pct(r.weight * 100), r.salaryCost]));
+      s1.push(['TOTAL', '100.0%', projRows.reduce((s, r) => s + r.salaryCost, 0)]);
+      s1.push([]);
+      s1.push(['PER-PROJECT P&L']);
+      s1.push(['Project', 'Revenue (IQD)', 'Salary Cost (IQD)', 'Project Expenses (IQD)', 'Net Profit (IQD)', 'Margin %']);
+      projRows.forEach(r => s1.push([r.proj, r.revenue, r.salaryCost, r.projExp, r.netProfit, pct(r.margin)]));
+      const tn = projRows.reduce((s, r) => s + r.netProfit, 0);
+      s1.push(['TOTAL', totalRevenue, projRows.reduce((s, r) => s + r.salaryCost, 0), totalProjExp, tn, pct(totalRevenue > 0 ? tn / totalRevenue * 100 : 0)]);
 
-    const rows: (string | number)[][] = [];
-    rows.push([`Monthly Financial Report — ${FIN_MONTHS[month - 1]} ${year}`]);
-    rows.push([]);
-    rows.push(['COMPANY SUMMARY']);
-    rows.push(['Total Revenue (IQD)',      expTotalRev]);
-    rows.push(['Total Salary (IQD)',       expTotalSal]);
-    rows.push(['General Expenses (IQD)',   expTotalGenExp]);
-    rows.push(['Project Expenses (IQD)',   expTotalProjExp]);
-    rows.push(['Net Profit (IQD)',         expCompanyNet]);
-    rows.push([]);
-    rows.push(['REVENUE BY PROJECT']);
-    rows.push(['Project', 'Revenue (IQD)', 'Weight %']);
-    expProjRows.forEach(r => rows.push([r.proj, r.revenue, pct(r.weight * 100)]));
-    rows.push(['TOTAL', expTotalRev, '100.0%']);
-    rows.push([]);
-    rows.push(['SALARY DISTRIBUTION']);
-    rows.push(['Project', 'Weight %', 'Salary Cost (IQD)']);
-    expProjRows.forEach(r => rows.push([r.proj, pct(r.weight * 100), r.salaryCost]));
-    rows.push(['TOTAL', '100.0%', expProjRows.reduce((s, r) => s + r.salaryCost, 0)]);
-    rows.push([]);
-    rows.push(['PER-PROJECT P&L']);
-    rows.push(['Project', 'Revenue (IQD)', 'Salary Cost (IQD)', 'Project Expenses (IQD)', 'Net Profit (IQD)', 'Margin %']);
-    expProjRows.forEach(r => rows.push([r.proj, r.revenue, r.salaryCost, r.projExp, r.netProfit, pct(r.margin)]));
-    const tn = expProjRows.reduce((s, r) => s + r.netProfit, 0);
-    rows.push(['TOTAL', expTotalRev, expProjRows.reduce((s, r) => s + r.salaryCost, 0), expTotalProjExp, tn, pct(expTotalRev > 0 ? tn / expTotalRev * 100 : 0)]);
-    rows.push([]);
-    rows.push([`TEAM MEMBER SALARIES (${workDays} working days)`]);
-    rows.push(['Name', 'Role', 'Active From', 'Days Active', 'Actual Salary (IQD)']);
-    exTeam.forEach(t => {
-      rows.push([t.full_name, t.role || '—', fmtActFrom(t.activated_at), `${t.daysActive}/${workDays} days`, t.proratedSalary]);
-    });
-    rows.push(['TOTAL', '', '', '', expTotalSal]);
+      // ── Sheet 2: Team Salaries ──
+      const s2: (string | number)[][] = [];
+      s2.push([`Team Member Salaries — ${mLabel}`]);
+      s2.push([]);
+      s2.push(['Name', 'Role', 'Active From', 'Days Active', 'Monthly Salary (IQD)', 'Salary (Pro-rated) (IQD)',
+        'Adjustment Type', 'Adjustment Amount (IQD)', 'Salary After Adjustment (IQD)', 'Difference (IQD)', 'Reason']);
+      teamWithSalary.forEach(t => {
+        s2.push([
+          t.full_name, t.role || '—', fmtActFrom(t.activated_at), `${t.daysActive}/${t.totalCalDays} days`,
+          num(t.monthly_salary), t.proratedSalary,
+          t.isAdjusted ? (t.adjType === 'bonus' ? 'Bonus' : t.adjType === 'deduction' ? 'Deduction' : 'Override') : '—',
+          t.isAdjusted ? t.adjAmount : '',
+          t.effectiveSalary, t.effectiveSalary - t.proratedSalary, t.adjReason || '',
+        ]);
+      });
+      s2.push(['TOTAL', '', '', '', sumSalaryBase, sumSalaryProrated, '', '', totalSalaryBudget, totalSalaryBudget - sumSalaryProrated, '']);
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [28, 20, 18, 20, 12].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, ws, 'Monthly Report');
-    XLSX.writeFile(wb, `Finance_Report_${FIN_MONTHS[month - 1]}_${year}.xlsx`);
+      // ── Sheet 3: Revenue Details ──
+      const s3: (string | number)[][] = [['Project', 'Site ID', 'Invoiced Amount (IQD)', 'Current Revenue (IQD)']];
+      allRev.filter(r => r.month === month && r.year === year).forEach(r => {
+        s3.push([r.project_name || '—', r.site_id || '—', num(r.amount), currentRevenueOf(r)]);
+      });
+      s3.push(['TOTAL', '',
+        allRev.filter(r => r.month === month && r.year === year).reduce((s, r) => s + num(r.amount), 0),
+        totalRevenue]);
+
+      // ── Sheet 4: General Expenses ──
+      const s4: (string | number)[][] = [['Date', 'Description', 'Category', 'Amount (IQD)', 'Notes', 'Added By']];
+      genRows.forEach(r => s4.push([
+        (r.expense_date as string) || '', (r.description as string) || '', (r.category as string) || '',
+        num(r.amount), (r.notes as string) || '', (r.added_by as string) || '',
+      ]));
+      s4.push(['TOTAL', '', '', totalGenRowsAmt, '', '']);
+
+      // ── Sheet 5: Project Expenses ──
+      const s5: (string | number)[][] = [['Date', 'Project', 'Site ID', 'Description', 'Category', 'Amount (IQD)',
+        'Submitted By', 'Approved By', 'Accommodation', 'Notes', 'Added By']];
+      projRowsRaw.forEach(r => s5.push([
+        ((r.activity_date || r.expense_date) as string) || '', (r.project_name as string) || '—', (r.site_id as string) || '',
+        (r.description as string) || '', (r.category as string) || '', num(r.amount),
+        (r.submitted_by as string) || '', (r.approved_by as string) || '', (r.accommodation as string) || '',
+        (r.notes as string) || '', (r.added_by as string) || '',
+      ]));
+      s5.push(['TOTAL', '', '', '', '', totalProjectRowsAmt, '', '', '', '', '']);
+
+      const wb = XLSX.utils.book_new();
+      const addSheet = (name: string, data: (string | number)[][], widths: number[]) => {
+        const ws = XLSX.utils.aoa_to_sheet(data);
+        ws['!cols'] = widths.map(w => ({ wch: w }));
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      };
+      addSheet('Summary',          s1, [38, 20, 20, 24, 20, 12]);
+      addSheet('Team Salaries',    s2, [26, 18, 14, 14, 20, 24, 16, 22, 28, 18, 30]);
+      addSheet('Revenue Details',  s3, [26, 18, 24, 24]);
+      addSheet('General Expenses', s4, [14, 36, 18, 18, 34, 18]);
+      addSheet('Project Expenses', s5, [14, 24, 14, 36, 18, 18, 18, 18, 18, 30, 18]);
+      XLSX.writeFile(wb, `Finance_Report_${FIN_MONTHS[month - 1]}_${year}.xlsx`);
+      showToast('Excel exported', true);
+    } catch (e: unknown) {
+      console.error('Export failed:', e);
+      showToast('Export failed: ' + (e instanceof Error ? e.message : String(e)), false);
+    }
   }
 
   // ── Pencil color ─────────────────────────────────────────────
@@ -678,7 +704,9 @@ export default function FinReport() {
                     <th>Role</th>
                     <th className={css.num}>Active From</th>
                     <th className={css.num}>Days Active</th>
-                    <th className={css.num}>Actual Salary (IQD)</th>
+                    <th className={css.num}>Salary (IQD)</th>
+                    <th className={css.num}>Adjustment</th>
+                    <th className={css.num}>Salary After Adjustment (IQD)</th>
                   </tr></thead>
                   <tbody>
                     {teamWithSalary.map(t => {
@@ -693,17 +721,23 @@ export default function FinReport() {
                             <td style={{ color: '#64748b' }}>{t.role || '—'}</td>
                             <td className={css.num}>{fmtActFrom(t.activated_at)}</td>
                             <td className={css.num}>{t.daysActive}/{t.totalCalDays} days</td>
-                            <td className={css.num} style={{ color: '#d97706' }}>
+                            <td className={css.num}>{iqd(t.proratedSalary)}</td>
+                            <td className={css.num}>
                               {t.isAdjusted
                                 ? <>
-                                    <s style={{ color: '#94a3b8', fontWeight: 400 }}>{iqd(t.proratedSalary)}</s>{' '}
-                                    <strong>{iqd(t.effectiveSalary)}</strong>
+                                    <span style={{ color: t.effectiveSalary - t.proratedSalary >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>
+                                      {t.effectiveSalary - t.proratedSalary >= 0 ? '+' : '−'}{iqd(Math.abs(t.effectiveSalary - t.proratedSalary))}
+                                    </span>
                                     <span className={`${css.adjBadge} ${t.adjType === 'bonus' ? css.adjBadgeBonus : t.adjType === 'deduction' ? css.adjBadgeDeduction : css.adjBadgeOverride}`}>
                                       {t.adjType === 'bonus' ? 'Bonus' : t.adjType === 'deduction' ? 'Deduction' : 'Override'}
                                     </span>
+                                    {t.adjReason && <div style={{ fontSize: 11, color: '#94a3b8' }}>{t.adjReason}</div>}
                                   </>
-                                : iqd(t.effectiveSalary)
+                                : <span style={{ color: '#94a3b8' }}>—</span>
                               }
+                            </td>
+                            <td className={css.num} style={{ color: '#d97706' }}>
+                              <strong>{iqd(t.effectiveSalary)}</strong>
                               {hasPerm('fin_report_adjust_salary') && (
                                 <button
                                   className={css.pencilBtn}
@@ -721,7 +755,7 @@ export default function FinReport() {
                           </tr>
                           {openPanelId === t.id && (
                             <tr key={t.id + '_panel'}>
-                              <td colSpan={5} style={{ padding: 0, borderBottom: '2px solid #6366f1' }}>
+                              <td colSpan={7} style={{ padding: 0, borderBottom: '2px solid #6366f1' }}>
                                 <div className={css.adjPanel}>
                                   <div className={css.adjPanelTitle}>Adjust Salary — {t.full_name}</div>
                                   <div className={css.adjFields}>
@@ -789,6 +823,11 @@ export default function FinReport() {
                   </tbody>
                   <tfoot><tr>
                     <td colSpan={4}>TOTAL</td>
+                    <td className={css.num}><strong>{iqd(teamWithSalary.reduce((s, t) => s + t.proratedSalary, 0))}</strong></td>
+                    <td className={css.num}>
+                      {(() => { const d = totalSalaryBudget - teamWithSalary.reduce((s, t) => s + t.proratedSalary, 0);
+                        return d === 0 ? '—' : <strong style={{ color: d > 0 ? '#16a34a' : '#dc2626' }}>{d > 0 ? '+' : '−'}{iqd(Math.abs(d))}</strong>; })()}
+                    </td>
                     <td className={css.num}><strong style={{ color: '#d97706' }}>{iqd(totalSalaryBudget)}</strong></td>
                   </tr></tfoot>
                 </table>
