@@ -390,8 +390,22 @@ export default function MyExpenses() {
     };
     let error: { message: string } | null = null;
     if (editId) {
-      const res = await supabase.from('expense_claims').update(payload).eq('id', editId);
+      // Resubmit: back to pending, clear the previous review so the admin sees
+      // it as a fresh submission. .select() so we can tell when the database
+      // (RLS) silently matched zero rows — an update that matches nothing
+      // returns no error, which previously showed a false "success".
+      const res = await supabase.from('expense_claims')
+        .update({
+          ...payload,
+          rejection_reason: null, reviewed_at: null, reviewed_by: null,
+          submitted_at: new Date().toISOString(),
+        })
+        .eq('id', editId)
+        .select('id');
       error = res.error;
+      if (!error && (!res.data || res.data.length === 0)) {
+        error = { message: 'The database did not accept the update (no rows changed). Ask an admin to apply the resubmit-rejected-claims policy (docs/go-live/25_expense_claims_resubmit_rejected.sql).' };
+      }
     } else {
       const res = await supabase.from('expense_claims').insert({ ...payload, submitted_at: new Date().toISOString() });
       error = res.error;
