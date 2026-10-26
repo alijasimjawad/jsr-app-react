@@ -22,6 +22,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/attendance-admin':  'Attendance',
   '/network-scopes':    'Network Scopes',
   '/site-lookup':       'Site Lookup',
+  '/site-surveys':      'Site Surveys',
   '/activity-log':      'Activity Log',
   '/user-management':   'User Management',
   '/backup-restore':    'Backup & Restore',

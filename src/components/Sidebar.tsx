@@ -841,6 +841,7 @@ function FieldRoleNav({ expandedGroup, toggleGroup, roleLower }: { expandedGroup
   const sitesDbDef       = VIEW_DAILY_WORK.find(d => d.key === 'view_sites_db')!;
   const myAttendanceDef  = VIEW_DAILY_WORK.find(d => d.key === 'view_my_attendance')!;
   const myTripsDef       = VIEW_DAILY_WORK.find(d => d.key === 'view_my_trips')!;
+  const siteSurveysDef   = VIEW_DAILY_WORK.find(d => d.key === 'view_site_surveys')!;
 
   return (
     <nav className={styles.nav} aria-label="Field navigation">
@@ -886,6 +887,12 @@ function FieldRoleNav({ expandedGroup, toggleGroup, roleLower }: { expandedGroup
         <NavLink to={routePlannerDef.to} className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}>
           <RouteIcon />
           <span className={styles.navLabel}>{t('nav_routePlanner')}</span>
+        </NavLink>
+      )}
+      {hasPerm(siteSurveysDef.key) && (
+        <NavLink to={siteSurveysDef.to} className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}>
+          <ReceiptIcon />
+          <span className={styles.navLabel}>{siteSurveysDef.label}</span>
         </NavLink>
       )}
 
@@ -1010,6 +1017,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const sitesDbDef        = VIEW_DAILY_WORK.find(d => d.key === 'view_sites_db')!;
   const myAttendanceDef   = VIEW_DAILY_WORK.find(d => d.key === 'view_my_attendance')!;
   const myTripsDef        = VIEW_DAILY_WORK.find(d => d.key === 'view_my_trips')!;
+  const siteSurveysDef    = VIEW_DAILY_WORK.find(d => d.key === 'view_site_surveys')!;
 
   const NAV_TOP = [
     ...(!isFieldRole || hasPerm(dashboardDef.key) ? [{ to: dashboardDef.to, label: dashboardDef.label, icon: GridIcon }] : []),
@@ -1033,6 +1041,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     ...(hasPerm(siteLookupDef.key)    ? [{ to: siteLookupDef.to,    label: siteLookupDef.label,    icon: SiteLookupIcon }] : []),
     ...(hasPerm(routePlannerDef.key)  ? [{ to: routePlannerDef.to,  label: routePlannerDef.label,  icon: RouteIcon }]      : []),
     ...(hasPerm(sitesDbDef.key)       ? [{ to: sitesDbDef.to,       label: sitesDbDef.label,       icon: DatabaseIcon }]   : []),
+    ...(hasPerm(siteSurveysDef.key)   ? [{ to: siteSurveysDef.to,   label: siteSurveysDef.label,   icon: ReceiptIcon }]    : []),
   ];
 
   const NAV_PERSONAL = [
