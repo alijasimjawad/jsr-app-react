@@ -384,6 +384,45 @@
   align-self: center;
 }
 
+/* ── Site ID custom dropdown ── */
+.siteDropdown {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+
+.siteDropdownRow {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-bottom: 1px solid var(--slate-50);
+  transition: background .1s;
+}
+.siteDropdownRow:last-child { border-bottom: none; }
+.siteDropdownRow:hover { background: var(--blue-50); }
+
+.siteDropdownAddRow {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  border-top: 1px solid var(--slate-100);
+  transition: background .1s;
+}
+.siteDropdownAddRow:hover { background: var(--blue-50); }
+
+/* ── Team member dropdown: selected row ── */
+.memberSearchRowSelected {
+  background: var(--blue-50);
+}
+.memberSearchRowSelected:hover { background: var(--blue-100); }
+
 /* ── Team member search ── */
 .memberSearchResults {
   border: 1.5px solid var(--border);

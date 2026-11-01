@@ -401,6 +401,7 @@ export default function DailyActivities() {
   const [notes, setNotes] = useState('');
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
   const [memberSearch, setMemberSearch] = useState('');
+  const [siteDropdownOpen, setSiteDropdownOpen] = useState(false);
 
   // Car Trip sub-section
   const [carTripEnabled, setCarTripEnabled] = useState(false);
@@ -461,8 +462,10 @@ export default function DailyActivities() {
   const [viewActivity, setViewActivity] = useState<DailyActivity | null>(null);
 
   const siteInputRef = useRef<HTMLInputElement>(null);
+  const siteContainerRef = useRef<HTMLDivElement>(null);
   const formCardRef = useRef<HTMLDivElement>(null);
   const memberSearchInputRef = useRef<HTMLInputElement>(null);
+  const memberDropdownRef = useRef<HTMLDivElement>(null);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
   const carSearchInputRef = useRef<HTMLInputElement>(null);
   const [carDropdownOpen, setCarDropdownOpen] = useState(false);
@@ -604,6 +607,20 @@ export default function DailyActivities() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [carTripEnabled, stopSitesKey]);
 
+  // Close site and member dropdowns on outside click
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (siteContainerRef.current && !siteContainerRef.current.contains(e.target as Node)) {
+        setSiteDropdownOpen(false);
+      }
+      if (memberDropdownRef.current && !memberDropdownRef.current.contains(e.target as Node)) {
+        setMemberDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, []);
+
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 3500);
@@ -651,6 +668,7 @@ export default function DailyActivities() {
     setSiteDataMap({});
     setSiteTags([]);
     setSiteInput('');
+    setSiteDropdownOpen(false);
     setGovernate('');
     resetCarTripCalc();
     if (!project) { setSections([]); return; }
@@ -670,6 +688,7 @@ export default function DailyActivities() {
     setSiteDataMap({});
     setSiteTags([]);
     setSiteInput('');
+    setSiteDropdownOpen(false);
     setGovernate('');
     if (!sectionId) return;
     (async () => {
@@ -702,6 +721,18 @@ export default function DailyActivities() {
     const keys = Object.keys(rowData);
     const govKey = keys.find(k => /^gov(ernate|ernorate)?$/i.test(k));
     if (govKey) setGovernate(String(rowData[govKey]).trim());
+  }
+
+  function pickSiteOption(val: string) {
+    if (!siteTags.includes(val)) {
+      const newTags = [...siteTags, val];
+      setSiteTags(newTags);
+      autoFillGovernate(val);
+      if (carTripEnabled) resetCarTripCalc();
+    }
+    setSiteInput('');
+    setSiteDropdownOpen(false);
+    setFieldErrors(fe => ({ ...fe, site_id: '' }));
   }
 
   // ── Site tag input handlers ──
@@ -1315,8 +1346,6 @@ export default function DailyActivities() {
   const { busyIds, busyInfo } = getBusyMap();
   const { busyIds: busyCarIds, busyInfo: busyCarInfo } = getBusyCarMap();
 
-  const filteredNonSelected = teamMembers
-    .filter(m => !selectedMemberIds.has(m.id) && m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()));
 
   function getSiteLabel(tag: string): string {
     const rowData = siteDataMap[tag];
@@ -1738,38 +1767,69 @@ export default function DailyActivities() {
                   </div>
                   <div className={styles.field}>
                     <label>{t('da_siteId')} <span className={styles.req}>*</span></label>
-                    <div
-                      className={`${styles.siteTagsWrap} ${fieldErrors.site_id ? styles.inputError : ''}`}
-                      onClick={() => siteInputRef.current?.focus()}
-                    >
-                      {siteTags.map((tag, i) => (
-                        <span key={i} className={styles.siteTag}>
-                          {getSiteLabel(tag)}
-                          <button type="button" onClick={e => { e.stopPropagation(); removeSiteTag(i); }}>×</button>
-                        </span>
-                      ))}
-                      <input
-                        ref={siteInputRef}
-                        className={styles.siteInput}
-                        type="text"
-                        placeholder={siteTags.length ? '' : t('da_searchSite')}
-                        value={siteInput}
-                        list="da-site-list"
-                        autoComplete="off"
-                        onChange={e => {
-                          setSiteInput(e.target.value);
-                          autoFillGovernate(e.target.value.trim());
-                          setFieldErrors(fe => ({ ...fe, site_id: '' }));
-                        }}
-                        onKeyDown={siteKeydown}
-                        onBlur={commitSiteInput}
-                      />
-                      <datalist id="da-site-list">
-                        {siteOptions.map(o => <option key={o} value={o} />)}
-                      </datalist>
-                      <svg className={styles.siteChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                      </svg>
+                    <div ref={siteContainerRef}>
+                      <div
+                        className={`${styles.siteTagsWrap} ${fieldErrors.site_id ? styles.inputError : ''}`}
+                        onClick={() => { siteInputRef.current?.focus(); setSiteDropdownOpen(true); }}
+                      >
+                        {siteTags.map((tag, i) => (
+                          <span key={i} className={styles.siteTag}>
+                            {getSiteLabel(tag)}
+                            <button type="button" onClick={e => { e.stopPropagation(); removeSiteTag(i); }}>×</button>
+                          </span>
+                        ))}
+                        <input
+                          ref={siteInputRef}
+                          className={styles.siteInput}
+                          type="text"
+                          placeholder={siteTags.length ? '' : t('da_searchSite')}
+                          value={siteInput}
+                          autoComplete="off"
+                          onFocus={() => setSiteDropdownOpen(true)}
+                          onChange={e => {
+                            setSiteInput(e.target.value);
+                            setSiteDropdownOpen(true);
+                            autoFillGovernate(e.target.value.trim());
+                            setFieldErrors(fe => ({ ...fe, site_id: '' }));
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Escape') { setSiteDropdownOpen(false); e.stopPropagation(); return; }
+                            siteKeydown(e);
+                          }}
+                          onBlur={commitSiteInput}
+                        />
+                        <svg className={styles.siteChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                      </div>
+                      {siteDropdownOpen && (
+                        <div className={styles.siteDropdown}>
+                          {(() => {
+                            const q = siteInput.trim().toLowerCase();
+                            const filtered = q ? siteOptions.filter(o => o.toLowerCase().includes(q)) : siteOptions;
+                            const isNew = !!siteInput.trim() && !siteOptions.some(o => o.toLowerCase() === siteInput.trim().toLowerCase());
+                            return (
+                              <>
+                                {filtered.map(o => (
+                                  <div key={o} className={styles.siteDropdownRow} onMouseDown={e => { e.preventDefault(); pickSiteOption(o); }}>
+                                    {getSiteLabel(o)}
+                                  </div>
+                                ))}
+                                {isNew && (
+                                  <div className={styles.siteDropdownAddRow} onMouseDown={e => { e.preventDefault(); commitSiteInput(); setSiteDropdownOpen(false); }}>
+                                    + Add "{siteInput.trim()}"
+                                  </div>
+                                )}
+                                {filtered.length === 0 && !isNew && (
+                                  <div className={styles.memberSearchEmpty}>
+                                    {sectionId ? 'No sites found' : t('da_selectProjFirst')}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
                     </div>
                     {fieldErrors.site_id && <span className={styles.fieldErrMsg}>{fieldErrors.site_id}</span>}
                   </div>
@@ -1855,53 +1915,64 @@ export default function DailyActivities() {
                 <div className={styles.subCardTitle}>{t('da_teamMembersLabel')}</div>
               </div>
               <div className={styles.subCardBody}>
-                <div
-                  className={styles.memberSearchWrap}
-                  onClick={() => memberSearchInputRef.current?.focus()}
-                >
-                  <svg className={styles.memberSearchIcon} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                  </svg>
-                  <input
-                    ref={memberSearchInputRef}
-                    className={styles.memberSearchInput}
-                    type="text"
-                    placeholder={t('da_searchMembers')}
-                    value={memberSearch}
-                    onFocus={() => setMemberDropdownOpen(true)}
-                    onBlur={() => setTimeout(() => setMemberDropdownOpen(false), 150)}
-                    onChange={e => setMemberSearch(e.target.value)}
-                  />
-                  <svg className={styles.memberSearchChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <polyline points="6 9 12 15 18 9"/>
-                  </svg>
-                </div>
-
-                {(memberDropdownOpen || memberSearch.trim()) && (
-                  <div className={styles.memberSearchResults}>
-                    {filteredNonSelected.length === 0 ? (
-                      <div className={styles.memberSearchEmpty}>{t('da_noMembersFound')}</div>
-                    ) : filteredNonSelected.map(m => {
-                      const isBusy = busyIds.has(m.id);
-                      const rt = roleTag(m.role);
-                      return (
-                        <div
-                          key={m.id}
-                          className={styles.memberSearchRow}
-                          onClick={() => {
-                            toggleMember(m.id, m.full_name, isBusy, busyInfo[m.id] || []);
-                            setMemberSearch('');
-                          }}
-                        >
-                          <span className={styles.chipAv}>{initials(m.full_name)}</span>
-                          <span className={styles.memberSearchName}>{m.full_name}</span>
-                          {rt && <span className={styles.roleTag} style={{ background: rt.bg, color: rt.text }} title={rt.title}>{rt.label}</span>}
-                          {isBusy && <span className={styles.chipBusyTag}>{t('da_assigned')}</span>}
-                        </div>
-                      );
-                    })}
+                <div ref={memberDropdownRef}>
+                  <div
+                    className={styles.memberSearchWrap}
+                    onClick={() => { memberSearchInputRef.current?.focus(); setMemberDropdownOpen(true); }}
+                  >
+                    <svg className={styles.memberSearchIcon} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input
+                      ref={memberSearchInputRef}
+                      className={styles.memberSearchInput}
+                      type="text"
+                      placeholder={t('da_searchMembers')}
+                      value={memberSearch}
+                      onFocus={() => setMemberDropdownOpen(true)}
+                      onChange={e => setMemberSearch(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Escape') setMemberDropdownOpen(false); }}
+                    />
+                    <svg className={styles.memberSearchChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
                   </div>
-                )}
+
+                  {memberDropdownOpen && (
+                    <div className={styles.memberSearchResults}>
+                      {(() => {
+                        const filtered = teamMembers.filter(m =>
+                          m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()),
+                        );
+                        if (filtered.length === 0) {
+                          return <div className={styles.memberSearchEmpty}>{t('da_noMembersFound')}</div>;
+                        }
+                        return filtered.map(m => {
+                          const isSelected = selectedMemberIds.has(m.id);
+                          const isBusy = busyIds.has(m.id);
+                          const rt = roleTag(m.role);
+                          return (
+                            <div
+                              key={m.id}
+                              className={`${styles.memberSearchRow}${isSelected ? ` ${styles.memberSearchRowSelected}` : ''}`}
+                              onClick={() => toggleMember(m.id, m.full_name, isBusy, busyInfo[m.id] || [])}
+                            >
+                              <span className={styles.chipAv}>{initials(m.full_name)}</span>
+                              <span className={styles.memberSearchName}>{m.full_name}</span>
+                              {rt && <span className={styles.roleTag} style={{ background: rt.bg, color: rt.text }} title={rt.title}>{rt.label}</span>}
+                              {isBusy && !isSelected && <span className={styles.chipBusyTag}>{t('da_assigned')}</span>}
+                              {isSelected && (
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--accent)', flexShrink: 0 }}>
+                                  <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  )}
+                </div>
 
                 <div className={styles.memberMeta}>
                   <span className={styles.memberCount}>
