@@ -615,6 +615,7 @@ export default function DailyActivities() {
       }
       if (memberDropdownRef.current && !memberDropdownRef.current.contains(e.target as Node)) {
         setMemberDropdownOpen(false);
+        setMemberSearch('');
       }
     }
     document.addEventListener('mousedown', onDocMouseDown);
@@ -775,6 +776,24 @@ export default function DailyActivities() {
         });
       });
     return { busyIds, busyInfo };
+  }
+
+  function selectAllFiltered() {
+    const filtered = teamMembers.filter(m =>
+      m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()),
+    );
+    const next = new Set(selectedMemberIds);
+    filtered.forEach(m => next.add(m.id));
+    setSelectedMemberIds(next);
+  }
+
+  function clearFilteredMembers() {
+    const filtered = teamMembers.filter(m =>
+      m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()),
+    );
+    const next = new Set(selectedMemberIds);
+    filtered.forEach(m => next.delete(m.id));
+    setSelectedMemberIds(next);
   }
 
   function toggleMember(memberId: string, memberName: string, isBusy: boolean, busyInfo: string[]) {
@@ -1916,60 +1935,81 @@ export default function DailyActivities() {
               </div>
               <div className={styles.subCardBody}>
                 <div ref={memberDropdownRef}>
+                  {/* Trigger */}
                   <div
                     className={styles.memberSearchWrap}
-                    onClick={() => { memberSearchInputRef.current?.focus(); setMemberDropdownOpen(true); }}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setMemberDropdownOpen(v => !v)}
                   >
                     <svg className={styles.memberSearchIcon} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
-                    <input
-                      ref={memberSearchInputRef}
-                      className={styles.memberSearchInput}
-                      type="text"
-                      placeholder={t('da_searchMembers')}
-                      value={memberSearch}
-                      onFocus={() => setMemberDropdownOpen(true)}
-                      onChange={e => setMemberSearch(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Escape') setMemberDropdownOpen(false); }}
-                    />
-                    <svg className={styles.memberSearchChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <span className={`${styles.memberTriggerDisplay}${selectedMemberIds.size > 0 ? ` ${styles.memberTriggerDisplaySelected}` : ''}`}>
+                      {selectedMemberIds.size > 0 ? t('da_membersSelected', { count: selectedMemberIds.size }) : t('da_searchMembers')}
+                    </span>
+                    <svg className={styles.memberSearchChevron} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ transform: memberDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}>
                       <polyline points="6 9 12 15 18 9"/>
                     </svg>
                   </div>
 
                   {memberDropdownOpen && (
-                    <div className={styles.memberSearchResults}>
-                      {(() => {
-                        const filtered = teamMembers.filter(m =>
-                          m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()),
-                        );
-                        if (filtered.length === 0) {
-                          return <div className={styles.memberSearchEmpty}>{t('da_noMembersFound')}</div>;
-                        }
-                        return filtered.map(m => {
-                          const isSelected = selectedMemberIds.has(m.id);
-                          const isBusy = busyIds.has(m.id);
-                          const rt = roleTag(m.role);
-                          return (
-                            <div
-                              key={m.id}
-                              className={`${styles.memberSearchRow}${isSelected ? ` ${styles.memberSearchRowSelected}` : ''}`}
-                              onClick={() => toggleMember(m.id, m.full_name, isBusy, busyInfo[m.id] || [])}
-                            >
-                              <span className={styles.chipAv}>{initials(m.full_name)}</span>
-                              <span className={styles.memberSearchName}>{m.full_name}</span>
-                              {rt && <span className={styles.roleTag} style={{ background: rt.bg, color: rt.text }} title={rt.title}>{rt.label}</span>}
-                              {isBusy && !isSelected && <span className={styles.chipBusyTag}>{t('da_assigned')}</span>}
-                              {isSelected && (
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--accent)', flexShrink: 0 }}>
-                                  <polyline points="20 6 9 17 4 12"/>
-                                </svg>
-                              )}
-                            </div>
+                    <div className={styles.memberPanel}>
+                      {/* Toolbar */}
+                      <div className={styles.memberPanelToolbar}>
+                        <div className={styles.memberPanelSearchWrap}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                          </svg>
+                          <input
+                            ref={memberSearchInputRef}
+                            className={styles.memberPanelSearchInput}
+                            type="text"
+                            placeholder={t('da_searchMembers')}
+                            value={memberSearch}
+                            autoFocus
+                            onChange={e => setMemberSearch(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Escape') { setMemberDropdownOpen(false); setMemberSearch(''); } }}
+                          />
+                        </div>
+                        <button type="button" className={styles.memberPanelBtnSm} onClick={selectAllFiltered}>Select all</button>
+                        <button type="button" className={styles.memberPanelBtnSm} onClick={clearFilteredMembers}>Clear</button>
+                        <button type="button" className={styles.memberPanelDoneBtn} onClick={() => { setMemberDropdownOpen(false); setMemberSearch(''); }}>Done</button>
+                      </div>
+                      {/* Member grid */}
+                      <div className={styles.memberPanelGrid}>
+                        {(() => {
+                          const filtered = teamMembers.filter(m =>
+                            m.full_name.toLowerCase().includes(memberSearch.trim().toLowerCase()),
                           );
-                        });
-                      })()}
+                          if (filtered.length === 0) {
+                            return <div className={styles.memberSearchEmpty} style={{ gridColumn: '1 / -1' }}>{t('da_noMembersFound')}</div>;
+                          }
+                          return filtered.map(m => {
+                            const isSelected = selectedMemberIds.has(m.id);
+                            const isBusy = busyIds.has(m.id);
+                            const rt = roleTag(m.role);
+                            return (
+                              <div
+                                key={m.id}
+                                className={`${styles.memberPanelRow}${isSelected ? ` ${styles.memberPanelRowSelected}` : ''}`}
+                                onClick={() => toggleMember(m.id, m.full_name, isBusy, busyInfo[m.id] || [])}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className={styles.memberPanelCheckbox}
+                                  checked={isSelected}
+                                  readOnly
+                                  tabIndex={-1}
+                                />
+                                <span className={styles.chipAv}>{initials(m.full_name)}</span>
+                                <span className={styles.memberPanelName}>{m.full_name}</span>
+                                {rt && <span className={styles.roleTag} style={{ background: rt.bg, color: rt.text }} title={rt.title}>{rt.label}</span>}
+                                {isBusy && !isSelected && <span className={styles.chipBusyTag}>{t('da_assigned')}</span>}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
                   )}
                 </div>

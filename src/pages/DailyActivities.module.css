@@ -423,6 +423,160 @@
 }
 .memberSearchRowSelected:hover { background: var(--blue-100); }
 
+/* ── Team member trigger display text ── */
+.memberTriggerDisplay {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-muted);
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.memberTriggerDisplaySelected {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ── Team member panel (replaces the small dropdown) ── */
+.memberPanel {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.memberPanelToolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1.5px solid var(--border);
+  background: var(--slate-50);
+  flex-wrap: wrap;
+}
+
+.memberPanelSearchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 130px;
+  min-width: 90px;
+}
+.memberPanelSearchWrap svg {
+  position: absolute;
+  left: 8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.memberPanelSearchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px 0 28px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color .15s;
+}
+.memberPanelSearchInput:focus { border-color: var(--accent); }
+
+.memberPanelBtnSm {
+  height: 30px;
+  padding: 0 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: var(--transition-fast);
+}
+.memberPanelBtnSm:hover { background: var(--slate-50); }
+
+.memberPanelDoneBtn {
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  margin-left: auto;
+  transition: var(--transition-fast);
+}
+.memberPanelDoneBtn:hover { background: var(--accent-hover); }
+
+.memberPanelGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 6px;
+  gap: 2px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.memberPanelRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .1s;
+  min-width: 0;
+}
+.memberPanelRow:hover { background: var(--slate-50); }
+
+.memberPanelRowSelected {
+  background: var(--blue-50);
+  border-color: var(--blue-100);
+}
+.memberPanelRowSelected:hover { background: var(--blue-100); }
+
+.memberPanelCheckbox {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.memberPanelName {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .memberPanelGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .memberPanelGrid { grid-template-columns: 1fr; max-height: none; overflow-y: visible; }
+}
+
 /* ── Team member search ── */
 .memberSearchResults {
   border: 1.5px solid var(--border);
