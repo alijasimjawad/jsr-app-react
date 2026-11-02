@@ -523,16 +523,15 @@
 
 .memberPanelGrid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* auto-fill columns: 1 col when card is narrow (~340px), 2 cols when wider */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   padding: 6px;
   gap: 2px;
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .memberPanelRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
@@ -556,6 +555,7 @@
   accent-color: var(--accent);
   cursor: pointer;
   pointer-events: none;
+  margin-top: 2px;
 }
 
 .memberPanelName {
@@ -564,17 +564,9 @@
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (max-width: 900px) {
-  .memberPanelGrid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media (max-width: 480px) {
-  .memberPanelGrid { grid-template-columns: 1fr; max-height: none; overflow-y: visible; }
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 /* ── Team member search ── */
@@ -721,6 +713,7 @@
   line-height: 1.4;
   vertical-align: middle;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chipName {
